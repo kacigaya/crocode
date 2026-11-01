@@ -7,11 +7,11 @@
     "node": ">=26"
   },
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint .",
-    "typecheck": "next typegen && tsc --noEmit",
+    "dev": "bun --bun next dev",
+    "build": "bun --bun next build",
+    "start": "bun --bun next start",
+    "lint": "bun --bun eslint .",
+    "typecheck": "bun --bun next typegen && bun --bun tsc --noEmit",
     "test": "bun test"
   },
   "dependencies": {
