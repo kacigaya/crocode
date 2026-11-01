@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="t"><title id="t">Crocode</title>
   <g fill="none" stroke="#34d399" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="14" y="14" width="228" height="228" rx="26" fill="#0f141c" stroke-width="12"/>
+    <rect x="14" y="14" width="228" height="228" rx="26" stroke-width="12"/>
     <path d="M14 58H242" stroke-width="10"/>
     <path d="M34 154H222" stroke-width="10"/>
     <path d="M56 154C58 132 68 117 83 111C87 85 125 81 131 106C152 112 174 116 191 120C195 101 216 101 218 122C221 131 221 143 222 154" stroke-width="10"/>
@@ -9,7 +9,6 @@
   </g>
   <g fill="#34d399">
     <circle cx="42" cy="36" r="6"/><circle cx="62" cy="36" r="6"/><circle cx="82" cy="36" r="6"/>
-    <circle cx="105" cy="119" r="10"/>
+    <path fill-rule="evenodd" d="M95 119a10 10 0 1 0 20 0a10 10 0 1 0-20 0ZM105 110a2 2 0 0 1 2 2v14a2 2 0 0 1-4 0v-14a2 2 0 0 1 2-2Z"/>
   </g>
-  <rect x="103" y="110" width="4" height="18" rx="2" fill="#0f141c"/>
 </svg>
