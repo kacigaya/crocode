@@ -1,6 +1,10 @@
 export type User = { id: number; login: string };
 export type Agents = { agents: string[]; default: string };
-export type Settings = { enabled: boolean; agent: string; model: string | null };
+export type Settings = {
+  enabled: boolean;
+  agent: string;
+  model: string | null;
+};
 export type Installation = {
   id: number;
   account_login: string;
@@ -11,7 +15,8 @@ export type Installation = {
   settings: Settings;
   can_admin: boolean;
 };
-export type ReviewStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'skipped';
+export type ReviewStatus =
+  "queued" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
 export type Review = {
   id: string;
   installation_id: number;
@@ -28,8 +33,14 @@ export type Review = {
   created_at: string;
   finished_at: string | null;
 };
-export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'] as const;
-export type Severity = typeof SEVERITIES[number];
+export const SEVERITIES = [
+  "critical",
+  "high",
+  "medium",
+  "low",
+  "info",
+] as const;
+export type Severity = (typeof SEVERITIES)[number];
 export type Finding = {
   id: string;
   path: string;
@@ -42,4 +53,8 @@ export type Finding = {
   suggestion: string | null;
   published: boolean;
 };
-export type ReviewDetail = { review: Review; summary: string | null; findings: Finding[] };
+export type ReviewDetail = {
+  review: Review;
+  summary: string | null;
+  findings: Finding[];
+};
