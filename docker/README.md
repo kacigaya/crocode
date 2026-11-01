@@ -28,6 +28,7 @@ No image contains credentials.
    ```
 
 The sandbox uses Node 24 LTS on Debian Bookworm.
+It removes npm and Corepack after installation. Review jobs do not need package managers.
 Its build arguments pin the agent packages:
 
 | Build argument | Default | npm package |
@@ -95,4 +96,4 @@ Crocode now uses `--pure` and disables project config, Claude config, and extern
 The same plugin probe did not execute with those controls.
 
 Local AMD64 builds were not possible because this ARM64 host has no AMD64 emulator.
-CI builds both Dockerfiles on native AMD64 and ARM64 runners without pushing images.
+[CI passed both image builds](https://github.com/kacigaya/crocode/actions/runs/41360371611) on native AMD64 and ARM64 runners without pushing images.

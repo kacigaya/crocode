@@ -16,6 +16,11 @@ RUN apt-get update \
     && groupadd --gid 10001 agent \
     && useradd --uid 10001 --gid agent --create-home agent
 
+# Installation tools are not needed in read-only review jobs.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+        /usr/local/bin/pnpm /usr/local/bin/pnpx /usr/local/bin/yarn /usr/local/bin/yarnpkg
+
 ENV HOME=/home/agent \
     DISABLE_AUTOUPDATER=1
 USER 10001:10001

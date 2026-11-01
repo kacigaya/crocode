@@ -189,3 +189,8 @@ A dependency scan found [RUSTSEC-2024-0449](https://rustsec.org/advisories/RUSTS
 The advisory states that it is unmaintained.
 OSV supplied no severity or fixed version in the scan.
 A parser change needs a separate compatibility review of `.crocode.yml` behavior.
+
+The sandbox scan first found 19 advisories across 6 dependencies of npm.
+The runtime image now removes npm and Corepack after installing the agents.
+A second OSV scan of 7 remaining package records, including Node's reported Undici version, found no matching advisories.
+This scan does not inspect dependencies embedded inside the native agent binaries or audit Debian packages.
