@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: crocode_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/crocode_test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy && rustup default 1.97.1
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked --all -- --include-ignored
+
+  dashboard:
+    runs-on: ubuntu-24.04
+    outputs:
+      exists: ${{ steps.package.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+      # hashFiles needs a checked-out workspace and is not valid in jobs.<id>.if.
+      - id: package
+        if: hashFiles('web/package.json') != ''
+        run: echo 'exists=true' >> "$GITHUB_OUTPUT"
+
+  web:
+    needs: dashboard
+    if: needs.dashboard.outputs.exists == 'true'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun test
+      - run: bun run build
+
+  docker:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: false
+      - name: Build sandbox image
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/sandbox
+          platforms: ${{ matrix.platform }}
+          push: false
