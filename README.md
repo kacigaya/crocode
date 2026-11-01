@@ -44,6 +44,30 @@ flowchart LR
 
 A new push cancels the old review. A commit that already has a review is not reviewed again.
 
+## Dashboard
+
+Sign in with GitHub. Choose an installation to set its agent and model and to
+follow its review history. Open a review to read each finding and its
+suggested fix. The screenshots use demo data.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/login-dark.png">
+    <img alt="Crocode sign-in page" src="assets/screenshots/login-light.png" width="49%">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/installation-dark.png">
+    <img alt="Installation settings and review history" src="assets/screenshots/installation-light.png" width="49%">
+  </picture>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/review-dark.png">
+    <img alt="Review with findings grouped by severity" src="assets/screenshots/review-light.png" width="100%">
+  </picture>
+</p>
+
 ## Quickstart
 
 You need a Linux host with Docker Compose. The worker starts sandbox containers
