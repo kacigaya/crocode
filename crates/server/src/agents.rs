@@ -156,11 +156,19 @@ pub fn command(
             argv.push("-".into());
         }
         Agent::OpenCode => {
-            argv.extend(["opencode", "run", "--format", "json"].map(String::from));
+            // Project plugins and MCP commands run before tool permissions apply.
+            argv.extend(["opencode", "run", "--pure", "--format", "json"].map(String::from));
             if let Some(model) = model {
                 argv.extend(["--model".into(), model.into()]);
             }
             env.push(("OPENCODE_CONFIG_CONTENT".into(), OPENCODE_CONFIG.into()));
+            for name in [
+                "OPENCODE_DISABLE_PROJECT_CONFIG",
+                "OPENCODE_DISABLE_CLAUDE_CODE",
+                "OPENCODE_DISABLE_EXTERNAL_SKILLS",
+            ] {
+                env.push((name.into(), "true".into()));
+            }
         }
     }
     (argv, env)
@@ -247,10 +255,21 @@ mod tests {
         assert!(codex.windows(2).any(|w| w == ["--sandbox", "read-only"]));
         assert_eq!(codex.last().unwrap(), "-");
 
-        let (_, env) = command(Agent::OpenCode, None, &paths());
+        let (opencode, env) = command(Agent::OpenCode, None, &paths());
+        assert!(opencode.iter().any(|arg| arg == "--pure"));
         let config: Value = serde_json::from_str(&env[0].1).unwrap();
         assert_eq!(config["permission"]["*"], "deny");
         assert_eq!(config["permission"]["edit"], Value::Null);
+        for name in [
+            "OPENCODE_DISABLE_PROJECT_CONFIG",
+            "OPENCODE_DISABLE_CLAUDE_CODE",
+            "OPENCODE_DISABLE_EXTERNAL_SKILLS",
+        ] {
+            assert!(
+                env.iter()
+                    .any(|(key, value)| key == name && value == "true")
+            );
+        }
     }
 
     #[test]
