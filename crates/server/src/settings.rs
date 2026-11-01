@@ -85,9 +85,11 @@ impl Settings {
     }
 
     pub fn from_env() -> Result<Self> {
-        let github_private_key = match env::var("GITHUB_PRIVATE_KEY_PATH") {
-            Ok(path) => std::fs::read(&path).with_context(|| format!("read {path}"))?,
-            Err(_) => required("GITHUB_PRIVATE_KEY")?
+        // Empty counts as unset, like every optional variable, because
+        // Compose passes `${VAR:-}` as an empty string.
+        let github_private_key = match optional("GITHUB_PRIVATE_KEY_PATH") {
+            Some(path) => std::fs::read(&path).with_context(|| format!("read {path}"))?,
+            None => required("GITHUB_PRIVATE_KEY")?
                 .replace("\\n", "\n")
                 .into_bytes(),
         };
