@@ -1,0 +1,496 @@
+//! Postgres queries. The `reviews` table is also the job queue.
+
+use std::collections::HashSet;
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
+use serde::Serialize;
+use sqlx::PgPool;
+use uuid::Uuid;
+
+pub type Db = PgPool;
+
+pub async fn connect(url: &str) -> anyhow::Result<Db> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(20)
+        .acquire_timeout(Duration::from_secs(10))
+        .connect(url)
+        .await?;
+    sqlx::migrate!("../../migrations").run(&pool).await?;
+    Ok(pool)
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Installation {
+    pub id: i64,
+    pub account_login: String,
+    pub account_type: String,
+    pub repository_selection: String,
+    pub suspended: bool,
+    pub enabled: bool,
+    pub agent: Option<String>,
+    pub model: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+pub struct InstallationUpsert<'a> {
+    pub id: i64,
+    pub account_id: i64,
+    pub account_login: &'a str,
+    pub account_type: &'a str,
+    pub repository_selection: Option<&'a str>,
+}
+
+pub async fn upsert_installation(db: &Db, i: &InstallationUpsert<'_>) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO installations (id, account_id, account_login, account_type, repository_selection)
+         VALUES ($1, $2, $3, $4, COALESCE($5, 'selected'))
+         ON CONFLICT (id) DO UPDATE SET
+            account_login = EXCLUDED.account_login,
+            account_type = EXCLUDED.account_type,
+            repository_selection = COALESCE($5, installations.repository_selection),
+            deleted = FALSE,
+            updated_at = now()",
+    )
+    .bind(i.id)
+    .bind(i.account_id)
+    .bind(i.account_login)
+    .bind(i.account_type)
+    .bind(i.repository_selection)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn set_installation_state(
+    db: &Db,
+    id: i64,
+    suspended: bool,
+    deleted: bool,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE installations SET suspended = $2, deleted = $3, updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .bind(suspended)
+    .bind(deleted)
+    .execute(db)
+    .await?;
+    if suspended || deleted {
+        sqlx::query(
+            "UPDATE reviews SET status = 'cancelled', finished_at = now(), error = 'installation removed'
+             WHERE installation_id = $1 AND status IN ('queued', 'running')",
+        )
+        .bind(id)
+        .execute(db)
+        .await?;
+    }
+    Ok(())
+}
+
+pub async fn installation(db: &Db, id: i64) -> sqlx::Result<Option<Installation>> {
+    sqlx::query_as(
+        "SELECT id, account_login, account_type, repository_selection, suspended,
+                enabled, agent, model, created_at
+         FROM installations WHERE id = $1 AND NOT deleted",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await
+}
+
+pub async fn installations(db: &Db, ids: &[i64]) -> sqlx::Result<Vec<Installation>> {
+    sqlx::query_as(
+        "SELECT id, account_login, account_type, repository_selection, suspended,
+                enabled, agent, model, created_at
+         FROM installations WHERE id = ANY($1) AND NOT deleted ORDER BY account_login",
+    )
+    .bind(ids)
+    .fetch_all(db)
+    .await
+}
+
+pub async fn update_settings(
+    db: &Db,
+    id: i64,
+    enabled: bool,
+    agent: Option<&str>,
+    model: Option<&str>,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE installations SET enabled = $2, agent = $3, model = $4, updated_at = now() WHERE id = $1",
+    )
+    .bind(id)
+    .bind(enabled)
+    .bind(agent)
+    .bind(model)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Records a webhook delivery. Returns false when it was seen before.
+pub async fn record_delivery(db: &Db, id: &str, event: &str) -> sqlx::Result<bool> {
+    let result = sqlx::query(
+        "INSERT INTO webhook_deliveries (id, event) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(id)
+    .bind(event)
+    .execute(db)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+pub struct NewReview<'a> {
+    pub installation_id: i64,
+    pub repo_id: i64,
+    pub repo_full_name: &'a str,
+    pub pr_number: i64,
+    pub pr_title: &'a str,
+    pub head_sha: &'a str,
+    pub base_sha: &'a str,
+}
+
+/// Queues a review unless this head commit already has one. Older open
+/// reviews of the same pull request are cancelled.
+pub async fn enqueue_review(db: &Db, r: &NewReview<'_>) -> sqlx::Result<Option<Uuid>> {
+    let mut tx = db.begin().await?;
+    cancel_pr_reviews(&mut *tx, r.repo_id, r.pr_number, Some(r.head_sha)).await?;
+    let id: Option<Uuid> = sqlx::query_scalar(
+        "INSERT INTO reviews (id, installation_id, repo_id, repo_full_name, pr_number, pr_title, head_sha, base_sha)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (repo_id, pr_number, head_sha) DO NOTHING
+         RETURNING id",
+    )
+    .bind(Uuid::new_v4())
+    .bind(r.installation_id)
+    .bind(r.repo_id)
+    .bind(r.repo_full_name)
+    .bind(r.pr_number as i32)
+    .bind(r.pr_title)
+    .bind(r.head_sha)
+    .bind(r.base_sha)
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(id)
+}
+
+pub async fn cancel_pr_reviews<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    repo_id: i64,
+    pr_number: i64,
+    keep_sha: Option<&str>,
+) -> sqlx::Result<u64> {
+    let result = sqlx::query(
+        "UPDATE reviews SET status = 'cancelled', finished_at = now(), error = 'superseded'
+         WHERE repo_id = $1 AND pr_number = $2 AND status IN ('queued', 'running')
+           AND ($3::text IS NULL OR head_sha <> $3)",
+    )
+    .bind(repo_id)
+    .bind(pr_number as i32)
+    .bind(keep_sha)
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Job {
+    pub id: Uuid,
+    pub installation_id: i64,
+    pub repo_id: i64,
+    pub repo_full_name: String,
+    pub pr_number: i32,
+    pub head_sha: String,
+    pub attempts: i32,
+    pub max_attempts: i32,
+    pub github_review_id: Option<i64>,
+}
+
+/// Claims the next due review. Skips installations that already run
+/// `max_per_installation` reviews, so one tenant cannot starve the others.
+/// The per-installation limit is soft under concurrent claims.
+pub async fn claim_review(
+    db: &Db,
+    worker: &str,
+    max_per_installation: i64,
+) -> sqlx::Result<Option<Job>> {
+    sqlx::query_as(
+        "UPDATE reviews SET status = 'running', attempts = attempts + 1, locked_by = $1,
+                heartbeat_at = now(), started_at = COALESCE(started_at, now())
+         WHERE id = (
+            SELECT r.id FROM reviews r
+            WHERE r.status = 'queued' AND r.run_after <= now()
+              AND (SELECT count(*) FROM reviews x
+                   WHERE x.installation_id = r.installation_id AND x.status = 'running') < $2
+            ORDER BY r.run_after
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1)
+         RETURNING id, installation_id, repo_id, repo_full_name, pr_number, head_sha,
+                   attempts, max_attempts, github_review_id",
+    )
+    .bind(worker)
+    .bind(max_per_installation)
+    .fetch_optional(db)
+    .await
+}
+
+/// Refreshes the lease. Returns false when the review is no longer ours,
+/// for example after cancellation.
+pub async fn heartbeat(db: &Db, id: Uuid, worker: &str) -> sqlx::Result<bool> {
+    let result = sqlx::query(
+        "UPDATE reviews SET heartbeat_at = now()
+         WHERE id = $1 AND status = 'running' AND locked_by = $2",
+    )
+    .bind(id)
+    .bind(worker)
+    .execute(db)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// Requeues reviews whose worker stopped sending heartbeats.
+pub async fn requeue_stale(db: &Db, older_than: Duration) -> sqlx::Result<u64> {
+    let result = sqlx::query(
+        "UPDATE reviews SET
+            status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'queued' END,
+            error = 'worker lost', locked_by = NULL,
+            finished_at = CASE WHEN attempts >= max_attempts THEN now() END
+         WHERE status = 'running' AND heartbeat_at < now() - make_interval(secs => $1)",
+    )
+    .bind(older_than.as_secs_f64())
+    .execute(db)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn prune_deliveries(db: &Db) -> sqlx::Result<()> {
+    sqlx::query("DELETE FROM webhook_deliveries WHERE received_at < now() - interval '7 days'")
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub struct Finish<'a> {
+    pub status: &'a str,
+    pub summary: Option<&'a str>,
+    pub error: Option<&'a str>,
+    pub agent: Option<&'a str>,
+    pub model: Option<&'a str>,
+}
+
+/// Sets a final state. Has no effect when the review is no longer ours.
+pub async fn finish_review(db: &Db, id: Uuid, worker: &str, f: &Finish<'_>) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE reviews SET status = $3, summary = $4, error = $5,
+                agent = COALESCE($6, agent), model = COALESCE($7, model),
+                finished_at = now(), locked_by = NULL
+         WHERE id = $1 AND status = 'running' AND locked_by = $2",
+    )
+    .bind(id)
+    .bind(worker)
+    .bind(f.status)
+    .bind(f.summary)
+    .bind(f.error)
+    .bind(f.agent)
+    .bind(f.model)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn retry_review(
+    db: &Db,
+    id: Uuid,
+    worker: &str,
+    error: &str,
+    delay: Duration,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE reviews SET status = 'queued', error = $3, locked_by = NULL,
+                run_after = now() + make_interval(secs => $4)
+         WHERE id = $1 AND status = 'running' AND locked_by = $2",
+    )
+    .bind(id)
+    .bind(worker)
+    .bind(error)
+    .bind(delay.as_secs_f64())
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Puts a review back in the queue without counting the attempt. Used on shutdown.
+pub async fn release_review(db: &Db, id: Uuid, worker: &str) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE reviews SET status = 'queued', attempts = GREATEST(attempts - 1, 0), locked_by = NULL
+         WHERE id = $1 AND status = 'running' AND locked_by = $2",
+    )
+    .bind(id)
+    .bind(worker)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn set_github_review_id(db: &Db, id: Uuid, review_id: i64) -> sqlx::Result<()> {
+    sqlx::query("UPDATE reviews SET github_review_id = $2 WHERE id = $1")
+        .bind(id)
+        .bind(review_id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn published_fingerprints(
+    db: &Db,
+    repo_id: i64,
+    pr_number: i64,
+) -> sqlx::Result<HashSet<String>> {
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT fingerprint FROM findings WHERE repo_id = $1 AND pr_number = $2 AND published",
+    )
+    .bind(repo_id)
+    .bind(pr_number as i32)
+    .fetch_all(db)
+    .await?;
+    Ok(rows.into_iter().collect())
+}
+
+pub struct NewFinding<'a> {
+    pub fingerprint: &'a str,
+    pub path: &'a str,
+    pub start_line: Option<u32>,
+    pub line: u32,
+    pub severity: &'a str,
+    pub category: &'a str,
+    pub title: &'a str,
+    pub body: &'a str,
+    pub suggestion: Option<&'a str>,
+    pub published: bool,
+}
+
+pub async fn insert_findings(
+    db: &Db,
+    review_id: Uuid,
+    repo_id: i64,
+    pr_number: i64,
+    findings: &[NewFinding<'_>],
+) -> sqlx::Result<()> {
+    let mut tx = db.begin().await?;
+    // A retried review replaces the findings of its earlier attempt.
+    sqlx::query("DELETE FROM findings WHERE review_id = $1")
+        .bind(review_id)
+        .execute(&mut *tx)
+        .await?;
+    for f in findings {
+        sqlx::query(
+            "INSERT INTO findings (id, review_id, repo_id, pr_number, fingerprint, path, start_line,
+                                   line, severity, category, title, body, suggestion, published)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(review_id)
+        .bind(repo_id)
+        .bind(pr_number as i32)
+        .bind(f.fingerprint)
+        .bind(f.path)
+        .bind(f.start_line.map(|n| n as i32))
+        .bind(f.line as i32)
+        .bind(f.severity)
+        .bind(f.category)
+        .bind(f.title)
+        .bind(f.body)
+        .bind(f.suggestion)
+        .bind(f.published)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct ReviewRow {
+    pub id: Uuid,
+    pub installation_id: i64,
+    pub repo_full_name: String,
+    pub pr_number: i32,
+    pub pr_title: String,
+    pub head_sha: String,
+    pub status: String,
+    pub agent: Option<String>,
+    pub model: Option<String>,
+    pub attempts: i32,
+    pub finding_count: i64,
+    pub error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+const REVIEW_COLUMNS: &str = "r.id, r.installation_id, r.repo_full_name, r.pr_number, r.pr_title,
+    r.head_sha, r.status, r.agent, r.model, r.attempts,
+    (SELECT count(*) FROM findings f WHERE f.review_id = r.id) AS finding_count,
+    r.error, r.created_at, r.finished_at";
+
+pub async fn list_reviews(
+    db: &Db,
+    installation_id: i64,
+    before: Option<DateTime<Utc>>,
+    limit: i64,
+) -> sqlx::Result<Vec<ReviewRow>> {
+    let sql = format!(
+        "SELECT {REVIEW_COLUMNS} FROM reviews r
+         WHERE r.installation_id = $1 AND ($2::timestamptz IS NULL OR r.created_at < $2)
+         ORDER BY r.created_at DESC LIMIT $3"
+    );
+    // The query text is built from constants only.
+    sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(installation_id)
+        .bind(before)
+        .bind(limit)
+        .fetch_all(db)
+        .await
+}
+
+pub async fn review(db: &Db, id: Uuid) -> sqlx::Result<Option<(ReviewRow, Option<String>)>> {
+    let sql = format!("SELECT {REVIEW_COLUMNS}, r.summary FROM reviews r WHERE r.id = $1");
+    let row: Option<ReviewWithSummary> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(id)
+        .fetch_optional(db)
+        .await?;
+    Ok(row.map(|r| (r.review, r.summary)))
+}
+
+#[derive(sqlx::FromRow)]
+struct ReviewWithSummary {
+    #[sqlx(flatten)]
+    review: ReviewRow,
+    summary: Option<String>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct FindingRow {
+    pub id: Uuid,
+    pub path: String,
+    pub start_line: Option<i32>,
+    pub line: i32,
+    pub severity: String,
+    pub category: String,
+    pub title: String,
+    pub body: String,
+    pub suggestion: Option<String>,
+    pub published: bool,
+}
+
+pub async fn findings(db: &Db, review_id: Uuid) -> sqlx::Result<Vec<FindingRow>> {
+    sqlx::query_as(
+        "SELECT id, path, start_line, line, severity, category, title, body, suggestion, published
+         FROM findings WHERE review_id = $1
+         ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2
+                                WHEN 'low' THEN 3 ELSE 4 END, path, line",
+    )
+    .bind(review_id)
+    .fetch_all(db)
+    .await
+}

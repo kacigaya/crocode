@@ -1,0 +1,234 @@
+//! Runs one agent process, in a locked-down container or on the host.
+
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::Duration;
+
+use anyhow::{Context, Result, bail};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::process::Command;
+use tokio_util::sync::CancellationToken;
+
+use crate::agents::Paths;
+use crate::settings::{SandboxMode, Settings};
+
+const MAX_STDOUT: usize = 8 * 1024 * 1024;
+const MAX_STDERR: usize = 64 * 1024;
+
+/// Container paths. The worker mounts the job directories here.
+pub const CONTAINER_PATHS: (&str, &str, &str) = ("/repo", "/input", "/output");
+
+pub struct Job<'a> {
+    /// Unique per run. Used as the container name.
+    pub name: String,
+    pub repo_dir: &'a Path,
+    pub input_dir: &'a Path,
+    pub output_dir: &'a Path,
+    pub argv: Vec<String>,
+    /// Fixed values, such as agent config. Not secret.
+    pub env: Vec<(String, String)>,
+    /// Names of variables copied from the worker environment.
+    pub passthrough: Vec<String>,
+    pub stdin: String,
+}
+
+#[derive(Debug)]
+pub struct Output {
+    pub stdout: String,
+    pub stderr: String,
+    pub success: bool,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RunError {
+    #[error("agent timed out after {0:?}")]
+    Timeout(Duration),
+    #[error("agent run cancelled")]
+    Cancelled,
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+pub fn paths(settings: &Settings, job_dir: &Path) -> Paths {
+    match settings.sandbox {
+        SandboxMode::Docker => Paths {
+            repo: CONTAINER_PATHS.0.into(),
+            input: CONTAINER_PATHS.1.into(),
+            output: CONTAINER_PATHS.2.into(),
+        },
+        SandboxMode::None => {
+            let s = |p: PathBuf| p.to_string_lossy().into_owned();
+            Paths {
+                repo: s(job_dir.join("repo")),
+                input: s(job_dir.join("input")),
+                output: s(job_dir.join("output")),
+            }
+        }
+    }
+}
+
+pub async fn run(
+    settings: &Settings,
+    job: Job<'_>,
+    cancel: &CancellationToken,
+) -> Result<Output, RunError> {
+    let mut command = match settings.sandbox {
+        SandboxMode::Docker => docker_command(settings, &job),
+        SandboxMode::None => host_command(&job)?,
+    };
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    let mut child = command.spawn().context("start agent process")?;
+    let mut stdin = child.stdin.take().context("agent stdin")?;
+    let stdout = child.stdout.take().context("agent stdout")?;
+    let stderr = child.stderr.take().context("agent stderr")?;
+
+    let input = job.stdin;
+    let writer = tokio::spawn(async move {
+        // The agent may exit before reading everything; ignore broken pipes.
+        let _ = stdin.write_all(input.as_bytes()).await;
+        let _ = stdin.shutdown().await;
+    });
+    let out_reader = tokio::spawn(read_capped(stdout, MAX_STDOUT));
+    let err_reader = tokio::spawn(read_capped(stderr, MAX_STDERR));
+
+    let status = tokio::select! {
+        status = child.wait() => status.context("wait for agent")?,
+        _ = tokio::time::sleep(settings.agent_timeout) => {
+            stop(settings, &job.name, &mut child).await;
+            return Err(RunError::Timeout(settings.agent_timeout));
+        }
+        _ = cancel.cancelled() => {
+            stop(settings, &job.name, &mut child).await;
+            return Err(RunError::Cancelled);
+        }
+    };
+    let _ = writer.await;
+    let stdout = out_reader.await.context("read stdout")??;
+    let stderr = err_reader.await.context("read stderr")??;
+    Ok(Output {
+        stdout,
+        stderr,
+        success: status.success(),
+    })
+}
+
+/// Builds `docker run` for one agent run.
+///
+/// The container gets a read-only root and repository, no capabilities, no
+/// privilege escalation, resource limits, and a non-root user. Secrets pass as
+/// `-e NAME` so their values never appear on a command line.
+fn docker_command(settings: &Settings, job: &Job<'_>) -> Command {
+    let mut c = Command::new("docker");
+    c.args(["run", "--rm", "-i", "--name", &job.name]);
+    c.args(["--network", &settings.sandbox_network]);
+    if let Some(runtime) = &settings.sandbox_runtime {
+        c.args(["--runtime", runtime]);
+    }
+    c.args([
+        "--read-only",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "--pids-limit=512",
+        "--memory=4g",
+        "--cpus=2",
+        "--user=10001:10001",
+        "--tmpfs=/tmp:rw,nosuid,nodev,size=512m",
+        "--tmpfs=/home/agent:rw,nosuid,nodev,size=512m,uid=10001,gid=10001",
+        "--env=HOME=/home/agent",
+        "--workdir",
+        CONTAINER_PATHS.0,
+    ]);
+    c.arg(format!(
+        "--volume={}:{}:ro",
+        job.repo_dir.display(),
+        CONTAINER_PATHS.0
+    ));
+    c.arg(format!(
+        "--volume={}:{}:ro",
+        job.input_dir.display(),
+        CONTAINER_PATHS.1
+    ));
+    c.arg(format!(
+        "--volume={}:{}:rw",
+        job.output_dir.display(),
+        CONTAINER_PATHS.2
+    ));
+    for (key, value) in &job.env {
+        c.arg(format!("--env={key}={value}"));
+    }
+    for name in &job.passthrough {
+        if std::env::var_os(name).is_some() {
+            c.arg(format!("--env={name}"));
+        }
+    }
+    c.arg(&settings.sandbox_image);
+    c.args(&job.argv);
+    c
+}
+
+/// Host mode for development. The process gets a clean environment.
+fn host_command(job: &Job<'_>) -> Result<Command> {
+    let Some((program, args)) = job.argv.split_first() else {
+        bail!("empty agent command");
+    };
+    let mut c = Command::new(program);
+    c.args(args).current_dir(job.repo_dir).env_clear();
+    for name in ["PATH", "HOME", "USER", "LANG", "TMPDIR"]
+        .into_iter()
+        .map(String::from)
+        .chain(job.passthrough.iter().cloned())
+    {
+        if let Some(value) = std::env::var_os(&name) {
+            c.env(name, value);
+        }
+    }
+    for (key, value) in &job.env {
+        c.env(key, value);
+    }
+    Ok(c)
+}
+
+async fn stop(settings: &Settings, name: &str, child: &mut tokio::process::Child) {
+    if settings.sandbox == SandboxMode::Docker {
+        // Killing the docker CLI does not always stop the container.
+        let _ = Command::new("docker")
+            .args(["kill", name])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
+    }
+    let _ = child.kill().await;
+}
+
+/// Reads at most `max` bytes and drains the rest so the child never blocks.
+async fn read_capped(mut reader: impl AsyncRead + Unpin, max: usize) -> Result<String> {
+    let mut kept = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = reader.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        let room = max.saturating_sub(kept.len());
+        kept.extend_from_slice(&buf[..n.min(room)]);
+    }
+    Ok(String::from_utf8_lossy(&kept).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn caps_output() {
+        let data = [b'a'; 100];
+        let out = read_capped(&data[..], 10).await.unwrap();
+        assert_eq!(out.len(), 10);
+    }
+}
