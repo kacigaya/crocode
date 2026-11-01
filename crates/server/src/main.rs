@@ -22,6 +22,9 @@ mod settings;
 mod webhook;
 mod worker;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: db::Db,

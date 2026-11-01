@@ -59,6 +59,31 @@ impl std::fmt::Debug for Settings {
 }
 
 impl Settings {
+    #[cfg(test)]
+    pub fn for_test() -> Self {
+        Self {
+            database_url: "postgres://unused:unused@127.0.0.1:1/unused".into(),
+            bind: "127.0.0.1:0".into(),
+            github_app_id: 1,
+            github_private_key: Vec::new(),
+            github_webhook_secret: b"test-webhook-secret".to_vec(),
+            github_api_url: "http://127.0.0.1:1".into(),
+            github_web_url: "http://127.0.0.1:1".into(),
+            agents: vec![Agent::Claude, Agent::Codex, Agent::OpenCode],
+            default_agent: Agent::Claude,
+            sandbox: SandboxMode::Docker,
+            sandbox_image: "crocode-sandbox:test".into(),
+            sandbox_network: "none".into(),
+            sandbox_runtime: None,
+            work_dir: "/unused".into(),
+            worker_concurrency: 2,
+            max_per_installation: 1,
+            agent_timeout: Duration::from_secs(1),
+            max_repo_size_mb: 1,
+            agent_env: Vec::new(),
+        }
+    }
+
     pub fn from_env() -> Result<Self> {
         let github_private_key = match env::var("GITHUB_PRIVATE_KEY_PATH") {
             Ok(path) => std::fs::read(&path).with_context(|| format!("read {path}"))?,

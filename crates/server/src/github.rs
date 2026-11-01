@@ -125,6 +125,17 @@ pub fn status_code(err: &octocrab::Error) -> Option<u16> {
 }
 
 impl GitHub {
+    #[cfg(test)]
+    pub fn for_test() -> Self {
+        Self {
+            app: Octocrab::builder()
+                .app(AppId(1), octocrab::EncodingKey::from_secret(b"test-only"))
+                .build()
+                .unwrap(),
+            api_url: "http://127.0.0.1:1".into(),
+        }
+    }
+
     pub fn new(app_id: u64, private_key_pem: &[u8], api_url: &str) -> Result<Self> {
         let app = Octocrab::builder()
             .base_uri(api_url)?
