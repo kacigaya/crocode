@@ -12,13 +12,13 @@
 
 - Rust checks: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all`.
 - Database tests need `DATABASE_URL`. Start Postgres with `docker compose up -d postgres`.
-- Web checks (in `web/`): `pnpm install`, `pnpm lint`, `pnpm typecheck`, `pnpm build`.
+- Web checks (in `web/`): `bun install`, `bun run lint`, `bun run typecheck`, `bun test`, `bun run build`.
 - Full stack: `docker compose up --build`.
 
 ## Host facts
 
 - This host is ARM64 (aarch64). Docker needs `sudo`.
-- Package manager for `web/` is pnpm.
+- Package manager and test runner for `web/` is Bun (`~/.bun/bin/bun`).
 
 ## Rules
 
