@@ -1,7 +1,12 @@
 services:
   postgres:
     image: postgres:17
-    env_file: .env
+    # Each service gets only the variables it reads. Docker Compose reads
+    # .env for ${...} interpolation.
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -15,7 +20,20 @@ services:
     build: .
     image: crocode:latest
     command: [api]
-    env_file: .env
+    # No agent credentials: the API never runs agents.
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      GITHUB_APP_ID: ${GITHUB_APP_ID}
+      GITHUB_PRIVATE_KEY: ${GITHUB_PRIVATE_KEY:-}
+      GITHUB_PRIVATE_KEY_PATH: ${GITHUB_PRIVATE_KEY_PATH:-}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
+      GITHUB_API_URL: ${GITHUB_API_URL:-https://api.github.com}
+      GITHUB_WEB_URL: ${GITHUB_WEB_URL:-https://github.com}
+      CROCODE_BIND: ${CROCODE_BIND:-0.0.0.0:8080}
+      CROCODE_AGENTS: ${CROCODE_AGENTS:-claude,opencode}
+      CROCODE_DEFAULT_AGENT: ${CROCODE_DEFAULT_AGENT:-claude}
+      CROCODE_LOG_FORMAT: ${CROCODE_LOG_FORMAT:-json}
+      RUST_LOG: ${RUST_LOG:-info}
     ports:
       - "8080:8080"
     depends_on:
@@ -27,6 +45,8 @@ services:
     build: .
     image: crocode:latest
     command: [worker]
+    # The worker needs agent credentials and any names in CROCODE_AGENT_ENV.
+    # It passes only named variables into sandbox containers.
     env_file: .env
     group_add:
       - "${DOCKER_GID:-0}"
@@ -43,11 +63,15 @@ services:
     stop_grace_period: 30s
     restart: unless-stopped
 
-  # The dashboard branch supplies web/Dockerfile.
   web:
     profiles: [dashboard]
     build: ./web
-    env_file: .env
+    # Dashboard secrets live in web/.env, apart from the backend secrets.
+    env_file:
+      - path: web/.env
+        required: false
+    environment:
+      CROCODE_API_URL: http://api:8080
     ports:
       - "3000:3000"
     depends_on:

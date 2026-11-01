@@ -7,10 +7,10 @@ It requests only `contents: read` and `pull_requests: write` for that token.
 These steps follow the official [app registration guide](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app) and [permission guide](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app).
 
 1. Choose your public HTTPS address, for example `https://crocode.example.com`.
-   Set `PUBLIC_URL` to that address in `.env`.
+   Set `PUBLIC_URL` to that address in `web/.env`.
    Route `/webhooks/github` to the Rust API on port 8080.
-   Route the dashboard and `/api/auth/callback` to the web service on port 3000 after its merge.
-   `PUBLIC_URL` describes the public site. The Rust server does not read it.
+   Route the dashboard and `/api/auth/callback` to the web service on port 3000.
+   Only the dashboard reads `PUBLIC_URL`. The Rust server does not read it.
 
 2. Open GitHub **Settings > Developer settings > GitHub Apps > New GitHub App**.
    For an organization-owned app, start from that organization's settings.
@@ -22,7 +22,7 @@ These steps follow the official [app registration guide](https://docs.github.com
    This is the dashboard OAuth callback, not the webhook URL.
    The Rust API does not implement this callback.
    Record the app's Client ID and create a client secret for the dashboard.
-   Use the dashboard branch's documented OAuth and session variables after it is merged.
+   Put them in `web/.env` as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. Set `GITHUB_APP_SLUG` and `SESSION_SECRET` there too.
    Do not give the client secret to an agent container.
 
 4. Keep user token expiration enabled.

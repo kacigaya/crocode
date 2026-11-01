@@ -73,7 +73,8 @@ cp .env.example .env && chmod 600 .env
    ```
 
 6. Put an HTTPS reverse proxy in front of port 8080. Point the app webhook at `/webhooks/github`.
-7. Start the dashboard on port 3000.
+7. Copy `web/.env.example` to `web/.env`. Set the app's OAuth client, slug, and a session secret.
+   Then start the dashboard on port 3000.
 
    ```bash
    sudo docker compose --profile dashboard up -d --build
@@ -111,6 +112,7 @@ example config enables Claude and OpenCode only. See
 ## Documentation
 
 - [GitHub App setup](docs/github-app.md)
+- [Dashboard](docs/dashboard.md)
 - [Configuration](docs/configuration.md)
 - [Security model](docs/security.md)
 - [REST API](docs/api.md)

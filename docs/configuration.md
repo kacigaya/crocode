@@ -4,7 +4,17 @@ Copy [.env.example](../.env.example) to `.env` for Compose.
 Replace all required placeholders before you start the services.
 The server reads environment variables at startup.
 It does not load `.env` when you run the binary directly.
-Compose loads that file through `env_file`.
+Compose reads that file for `${...}` interpolation.
+Each service gets only the variables it reads:
+
+1. `postgres` gets the three `POSTGRES_*` variables.
+2. `api` gets the database, GitHub App, agent list, and log variables. It gets no agent credentials.
+3. `worker` loads the whole `.env` through `env_file`. It passes only named variables into sandbox containers.
+4. `web` loads `web/.env` through `env_file`. Compose sets `CROCODE_API_URL=http://api:8080`.
+
+Keep the dashboard secrets in `web/.env`, not in `.env`.
+Copy [web/.env.example](../web/.env.example) to start.
+If you add a variable to the `api` service, add it to `docker-compose.yml` too.
 
 ## Server environment
 
@@ -74,12 +84,11 @@ Rebuild the image to update pinned CLIs.
 | `POSTGRES_DB` | Example: `crocode` | Initial database name. |
 | `DOCKER_GID` | `0` | Docker socket's host group ID. Read it with `stat -c '%g' /var/run/docker.sock`. |
 | `CROCODE_WORK_DIR` | `/var/lib/crocode/work` | Same absolute bind path on host and worker. Create it with owner `10000:10000`. |
-| `PUBLIC_URL` | Example: `https://crocode.example.com` | Public site address for GitHub App registration. The Rust server does not read it. |
 
 The `postgres-data` named volume holds database files.
 Postgres initialization variables do not change the password or user in an existing data volume.
-The `web` service uses the `dashboard` profile until its Dockerfile is merged.
-The dashboard's OAuth and session variable names must follow that branch's documentation.
+The `web` service uses the `dashboard` profile.
+Set its variables in `web/.env`. See [dashboard setup](dashboard.md).
 
 ## Repository config
 
