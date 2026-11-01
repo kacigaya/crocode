@@ -1,169 +1,141 @@
-# Crocode
+<p align="center">
+  <img src="https://raw.githubusercontent.com/kacigaya/crocode/main/assets/crocode-logo.svg" alt="Crocode logo" width="200">
+</p>
 
-Crocode is an open-source, self-hostable GitHub AI code review bot.
-It runs Claude Code, Codex, or OpenCode in a read-only container.
-It checks the findings and posts one GitHub `COMMENT` review with inline comments.
-It does not approve or block a pull request.
-If there are no new findings, it saves the result without posting a review.
+<h1 align="center">Crocode</h1>
 
-Status: in development. License: [Apache 2.0](LICENSE).
+<p align="center">
+  <strong>Self-hostable AI code review for GitHub. Crocode runs Claude Code,
+  Codex, or OpenCode in a read-only container, checks every finding against
+  the diff, and posts inline review comments with severity and suggested
+  fixes.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/kacigaya/crocode/actions/workflows/ci.yml"><img alt="CI status" src="https://shieldcn.dev/github/ci/kacigaya/crocode.svg?workflow=ci.yml&amp;variant=secondary"></a>
+  <a href="https://www.rust-lang.org/"><img alt="Rust 1.88 or newer" src="https://shieldcn.dev/badge/Rust-1.88%2B-dea584.svg?variant=secondary&amp;logo=rust"></a>
+  <a href="https://nextjs.org/"><img alt="Next.js 16" src="https://shieldcn.dev/badge/Next.js-16-000000.svg?variant=secondary&amp;logo=nextdotjs"></a>
+  <a href="docker-compose.yml"><img alt="Docker Compose for ARM64 and AMD64" src="https://shieldcn.dev/badge/Docker_Compose-ARM64_%7C_AMD64-2496ed.svg?variant=secondary&amp;logo=docker"></a>
+  <a href="https://github.com/kacigaya/crocode/blob/main/LICENSE"><img alt="Apache 2.0 License" src="https://shieldcn.dev/github/license/kacigaya/crocode.svg?variant=secondary"></a>
+</p>
+
+> [!NOTE]
+> Crocode is in development. No release is published yet.
+
+## How it works
 
 ```mermaid
 flowchart LR
-    GH[GitHub webhook] --> API[Rust API: verify signature]
+    GH[GitHub webhook] --> API[Rust API]
     API --> DB[(Postgres queue)]
     DB --> Worker[Rust worker]
-    Worker --> Base[Config from base commit]
     Worker --> Sandbox[Read-only agent container]
-    Sandbox --> Validate[Validate and dedupe findings]
-    Validate --> Review[GitHub COMMENT review]
-    Validate --> DB
+    Sandbox --> Validate[Validate and dedupe]
+    Validate --> Review[GitHub review]
     Web[Next.js dashboard] --> API
 ```
 
-`crates/core` holds the pure review logic.
-`crates/server` holds the API, queue, GitHub client, and worker.
-The worker keeps GitHub credentials outside the agent container.
-See the [security model](docs/security.md) before you run reviews on untrusted code.
+1. The API verifies the webhook signature and queues the pull request.
+2. A worker claims the job and mints a token for that one repository.
+3. The worker reads `.crocode.yml` from the base commit, not from the pull request.
+4. The agent reviews the diff in a container with a read-only checkout and no GitHub token.
+5. Crocode drops findings outside the diff, removes duplicates, and redacts secrets.
+6. Crocode posts one `COMMENT` review. It never approves or blocks a pull request.
 
-## Quick start
+A new push cancels the old review. A commit that already has a review is not reviewed again.
 
-Use a Linux Docker host with Docker Compose.
-The worker needs the Docker socket. Socket access gives it control of the host daemon.
-Use a dedicated host for reviews.
-The images support ARM64 and AMD64.
-See [image builds and local checks](docker/README.md) for the Codex namespace limitation.
+## Quickstart
 
-1. Clone the repository.
+You need a Linux host with Docker Compose. The worker starts sandbox containers
+through the Docker socket, so give Crocode a dedicated host.
 
-   ```sh
-   git clone https://github.com/kacigaya/crocode.git
-   cd crocode
-   ```
+```bash
+git clone https://github.com/kacigaya/crocode.git
+cd crocode
+cp .env.example .env && chmod 600 .env
+```
 
-2. Copy the environment example.
+1. [Register a GitHub App](docs/github-app.md). Put its ID, private key, and webhook secret in `.env`.
+2. Set a database password and the API key for your agent in `.env`.
+3. Set `DOCKER_GID` to the output of `stat -c '%g' /var/run/docker.sock`.
+4. Create the work directory. The host path and the worker path must match.
 
-   ```sh
-   cp .env.example .env
-   chmod 600 .env
-   ```
-
-3. [Register a GitHub App](docs/github-app.md).
-   Set the app ID, private key, and webhook secret in `.env`.
-   Set a new database password in both `POSTGRES_PASSWORD` and `DATABASE_URL`.
-   Set the API key for your chosen agent.
-   The placeholders will not authenticate.
-
-4. Set `DOCKER_GID` in `.env` to this value.
-
-   ```sh
-   stat -c '%g' /var/run/docker.sock
-   ```
-
-5. Create the work directory with the worker's user ID.
-   If you change `CROCODE_WORK_DIR`, use that same absolute path here.
-   The host path and the worker path must match because sandbox containers are siblings.
-
-   ```sh
+   ```bash
    sudo install -d -m 0755 -o 10000 -g 10000 /var/lib/crocode/work
    ```
 
-6. Build the sandbox image on the worker's Docker daemon.
+5. Build the sandbox image and start the backend.
 
-   ```sh
+   ```bash
    sudo docker build -t crocode-sandbox:latest docker/sandbox
-   ```
-
-7. Check Compose and start the backend.
-   The server applies database migrations at startup.
-
-   ```sh
-   sudo docker compose config --quiet
    sudo docker compose up -d --build postgres api worker
    curl --fail http://localhost:8080/healthz
    ```
 
-8. Put an HTTPS reverse proxy in front of the API.
-   Send `/webhooks/github` to API port 8080.
-   Keep webhook SSL verification enabled in GitHub.
-   Install the app on selected repositories.
-   Open a pull request and check the worker logs.
+6. Put an HTTPS reverse proxy in front of port 8080. Point the app webhook at `/webhooks/github`.
+7. Start the dashboard on port 3000.
 
-   ```sh
-   sudo docker compose logs -f api worker
+   ```bash
+   sudo docker compose --profile dashboard up -d --build
    ```
-
-The dashboard Dockerfile arrives with the dashboard branch.
-The `web` service stays in the `dashboard` profile until that merge.
-After the merge, configure its OAuth and session variables, then start it:
-
-```sh
-sudo docker compose --profile dashboard up -d --build
-```
-
-The dashboard uses port 3000.
-Route its OAuth callback `${PUBLIC_URL}/api/auth/callback` to the web service.
-Keep the Rust REST API internal to the dashboard where possible.
-Change the published ports if another service uses 8080 or 3000.
-
-The example enables Claude and OpenCode.
-Enable Codex only after its read-only sandbox probe passes on your Docker host.
-No personal CLI login directory needs to be mounted into any container.
 
 ## Repository config
 
-Add `.crocode.yml` to the base branch before you open a pull request.
-Crocode reads the file from the PR base commit.
-A change to this file inside the PR does not change that PR's review settings.
+Add `.crocode.yml` to the default branch. Every field is optional.
 
 ```yaml
-enabled: true
-agent: claude
-model: null
-review_drafts: false
-min_severity: low
+agent: claude            # claude, codex, or opencode
+min_severity: low        # info, low, medium, high, critical
 max_comments: 20
-max_files: 100
-max_changed_lines: 3000
+review_drafts: false
 ignore:
   - "docs/**"
 instructions: |
   Focus on authentication and data loss.
-  Report a clear failure case for each finding.
 ```
 
-See [all configuration fields and defaults](docs/configuration.md), [GitHub App setup](docs/github-app.md), and the [REST API contract](docs/api.md).
+See [all fields and defaults](docs/configuration.md).
+
+## Agents
+
+| Agent | Read-only mode | Credentials |
+|---|---|---|
+| Claude Code | `--bare --restricted`, tools `Read,Grep,Glob` only | `ANTHROPIC_API_KEY` |
+| OpenCode | Every permission denied except read, glob, and grep | Provider key, for example `OPENROUTER_API_KEY` |
+| Codex | `--sandbox read-only` | `CODEX_API_KEY` |
+
+Codex needs bubblewrap namespaces. Docker's default profile blocks them, so the
+example config enables Claude and OpenCode only. See
+[image builds and checks](docker/README.md) before you enable Codex.
+
+## Documentation
+
+- [GitHub App setup](docs/github-app.md)
+- [Configuration](docs/configuration.md)
+- [Security model](docs/security.md)
+- [REST API](docs/api.md)
+- [Docker images](docker/README.md)
 
 ## Development
 
-1. Run the Rust checks.
+```bash
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all
+DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/postgres \
+  cargo test --all -- --include-ignored
+```
 
-   ```sh
-   cargo fmt --all --check
-   cargo clippy --all-targets -- -D warnings
-   cargo test --all
-   ```
+The dashboard lives in `web/` and uses Bun: `bun install`, `bun run lint`,
+`bun run typecheck`, `bun test`, and `bun run build`.
 
-2. Run the ignored DB tests against a separate Postgres 17 instance.
-   The user must be able to create test databases.
-   SQLx applies the migrations to each test database.
+## Security
 
-   ```sh
-   DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/postgres \
-     cargo test --all -- --include-ignored
-   ```
+Crocode treats all pull request content as hostile. Agents get read-only tools,
+credentials stay out of the sandbox, and published text is escaped so it
+cannot ping users or load images. Sandbox network egress is open by default.
+Read the [security model](docs/security.md) before you review untrusted code.
 
-3. Run the web checks after its branch is merged.
+## License
 
-   ```sh
-   cd web
-   bun install --frozen-lockfile
-   bun run lint
-   bun run typecheck
-   bun test
-   bun run build
-   ```
-
-CI runs the Rust checks with Postgres 17.
-It checks the dashboard when its package manifest exists.
-It builds both Dockerfiles on native ARM64 and AMD64 runners without publishing images.
+Apache License 2.0. See [LICENSE](LICENSE).
