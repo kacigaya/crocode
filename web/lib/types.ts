@@ -1,8 +1,12 @@
 export type User = { id: number; login: string };
 export type Agents = { agents: string[]; default: string };
+/** Form value for "use the server default agent". The API stores it as null. */
+export const DEFAULT_AGENT = "default";
+
 export type Settings = {
   enabled: boolean;
-  agent: string;
+  /** Null means the server default agent. */
+  agent: string | null;
   model: string | null;
 };
 export type Installation = {
@@ -25,7 +29,8 @@ export type Review = {
   pr_title: string;
   head_sha: string;
   status: ReviewStatus;
-  agent: string;
+  /** Null until the worker picks an agent. */
+  agent: string | null;
   model: string | null;
   attempts: number;
   finding_count: number;

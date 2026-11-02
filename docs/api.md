@@ -60,6 +60,7 @@ Installations that the user can access and that exist in the database.
 ```
 
 `can_admin` is true when the user owns the account or is an organization admin.
+`settings.agent` and `settings.model` are `null` when the installation uses the server default.
 
 ### `GET /api/v1/installations/{id}`
 
@@ -101,6 +102,7 @@ Newest first. `limit` is 1 to 100, default 50.
 ```
 
 `status` is one of `queued`, `running`, `succeeded`, `failed`, `cancelled`, `skipped`.
+`agent` is `null` until a worker picks an agent for the review.
 
 ### `GET /api/v1/reviews/{id}`
 
