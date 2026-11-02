@@ -1,5 +1,7 @@
 import "server-only";
 
+export type Env = ReturnType<typeof getEnv>;
+
 export function getEnv() {
   function required(name: string) {
     const value = process.env[name];
@@ -29,9 +31,9 @@ export function getEnv() {
     }
     return parsed.toString().replace(/\/$/, "");
   }
-  const sessionSecret = required("SESSION_SECRET");
-  if (sessionSecret.length < 32)
-    throw new Error("SESSION_SECRET must contain at least 32 characters");
+  const authSecret = required("BETTER_AUTH_SECRET");
+  if (authSecret.length < 32)
+    throw new Error("BETTER_AUTH_SECRET must contain at least 32 characters");
   const appSlug = required("GITHUB_APP_SLUG");
   if (!/^[a-zA-Z0-9-]+$/.test(appSlug))
     throw new Error("GITHUB_APP_SLUG must be a GitHub App slug");
@@ -39,8 +41,8 @@ export function getEnv() {
     clientId: required("GITHUB_CLIENT_ID"),
     clientSecret: required("GITHUB_CLIENT_SECRET"),
     appSlug,
-    sessionSecret,
+    authSecret,
     apiUrl: url("CROCODE_API_URL"),
-    publicUrl: url("PUBLIC_URL", true),
+    authUrl: url("BETTER_AUTH_URL", true),
   };
 }

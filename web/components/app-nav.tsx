@@ -4,6 +4,7 @@ import { BookOpen, LayoutGrid, LogOut, Menu, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useId, useRef, useState } from "react";
+import { signOut } from "@/app/auth-actions";
 import { Brand, Monogram } from "@/components/brand";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -113,7 +114,7 @@ export function Account({ login }: { login: string }) {
       <span className="min-w-0 flex-1 truncate text-sm" title={login}>
         @{login}
       </span>
-      <form action="/api/auth/logout" method="post">
+      <form action={signOut}>
         <Button type="submit" variant="ghost" size="icon" aria-label="Sign out">
           <LogOut aria-hidden="true" />
         </Button>

@@ -7,32 +7,43 @@ Use Bun 1.3.14. All dashboard files are in `web/`.
 
 1. Run `bun install` in `web/`.
 2. Copy `.env.example` to `.env.local`.
-3. Set all six variables. `SESSION_SECRET` must contain at least 32 random characters. Keep it private and stable.
-4. Set the GitHub App user OAuth callback to `${PUBLIC_URL}/api/auth/callback`.
+3. Set all six variables. `BETTER_AUTH_SECRET` must contain at least 32 random characters. Keep it private and stable.
+4. Set the GitHub App user OAuth callback to `${BETTER_AUTH_URL}/api/auth/callback/github`.
 5. Start the Rust API. Set `CROCODE_API_URL` to its server-side address.
-6. Run `bun run dev`. Open the address set in `PUBLIC_URL`.
+6. Run `bun run dev`. Open the address set in `BETTER_AUTH_URL`.
 
-`PUBLIC_URL` must be an HTTP or HTTPS origin with no path. Use HTTPS in production.
+`BETTER_AUTH_URL` must be an HTTP or HTTPS origin with no path. Use HTTPS in production.
 Environment values are checked on first use. Builds do not need secrets.
 The dashboard does not use `NEXT_PUBLIC_` variables.
 
 ## Sessions and requests
 
-GitHub tokens stay on the server. The browser gets an AES-256-GCM encrypted,
-httpOnly session cookie. SHA-256 derives the encryption key from `SESSION_SECRET`.
-OAuth state uses a separate authenticated cookie purpose and expires after ten minutes.
-The callback compares state with `timingSafeEqual`.
+[Better Auth](https://better-auth.com) runs GitHub sign-in in stateless mode.
+The dashboard has no database. Better Auth keeps the session and the GitHub
+account in encrypted, httpOnly cookies with the `crocode.` prefix.
+The account cookie holds the GitHub user access token. Only server code reads it.
+OAuth sign-in uses state and PKCE. The state cookie expires after ten minutes.
 
-Sessions last up to eight hours. A shorter GitHub token expiry takes precedence.
-The dashboard does not store or use refresh tokens. Sign in again after expiry.
-Changing `SESSION_SECRET` ends all existing sessions.
+The routes that return OAuth tokens, `/api/auth/get-access-token` and
+`/api/auth/refresh-token`, are disabled. `/api/auth/get-session` returns no tokens.
+The GitHub user gets a placeholder email, `<github-id>@github.invalid`.
+Real email addresses are not read into the session.
+
+Sessions last eight hours, the lifetime of a GitHub App user access token.
+Token refresh is disabled. GitHub rotates refresh tokens, and a server
+component cannot save the new cookie. Sign in again after expiry.
+Changing `BETTER_AUTH_SECRET` ends all existing sessions.
+Better Auth telemetry is off. Do not set `BETTER_AUTH_TELEMETRY`.
+Without a database, Better Auth also writes each sign-in to an in-memory store.
+The dashboard creates one Better Auth instance per request, so that store does
+not grow. For the same reason, Better Auth's in-memory rate limit does not apply.
+Rate-limit `/api/auth/*` at the reverse proxy if you need it.
 
 Every API request uses bearer authentication, a 15-second timeout, and no cache.
-API 401 responses redirect to `/api/auth/login`. That route clears the session
-before it starts GitHub sign-in. It also clears expired or invalid sessions.
-Logout requires a POST request whose Origin matches `PUBLIC_URL`.
-Next.js checks the origin of Server Action requests. A reverse proxy must preserve
-the public Host or X-Forwarded-Host value.
+An expired token or an API 401 response sends the user to `/?auth=expired`.
+Sign-in and sign-out are Server Actions. Both require an Origin header that
+matches `BETTER_AUTH_URL`. A reverse proxy must preserve the public Host or
+X-Forwarded-Host value.
 
 Settings saves check `can_admin` again on the server. They validate the selected
 agent against `/api/v1/agents`. An empty model becomes `null`.
@@ -47,10 +58,11 @@ Review summaries, finding bodies, and suggestions render as escaped text.
 5. Run `bun run scripts/smoke.ts`.
 
 The smoke script starts the built standalone server and a local mock API.
-It uses temporary test credentials. It checks authentication redirects, settings
-saves, the admin guard, pagination, review text escaping, empty pages, missing
-pages, API 401 handling, OAuth state rejection, and logout CSRF protection.
-It does not contact GitHub. It stops both servers when it finishes.
+It runs the Better Auth GitHub callback against a fake GitHub to create session
+cookies. It checks authentication redirects, settings saves, the admin guard,
+pagination, review text escaping, empty pages, missing pages, API 401 handling,
+expired tokens, the disabled token routes, OAuth state rejection, and the
+sign-in and sign-out origin checks. It does not contact GitHub. It stops both servers when it finishes.
 Set `CROCODE_SMOKE_RUNTIME=node` to check the same standalone output with Node.
 
 ## Docker
@@ -77,6 +89,8 @@ still need a browser check.
 
 The OSV scan found no advisories in the 21 distinct package versions found in the
 standalone runtime. This scan does not cover system packages in the Docker image.
+OSV reported no advisories for `better-auth` 1.7.15 and `@better-auth/core` 1.7.15
+when Better Auth was added. The standalone runtime was not scanned again.
 The full lockfile scan found `minimatch` 3.1.5 and 10.2.6 in the development lint
 tree, affected by [GHSA-g3hv-75wg-m249](https://osv.dev/vulnerability/GHSA-g3hv-75wg-m249)
 (CVE-2026-118764). OSV supplies vector
@@ -88,6 +102,8 @@ warnings in that tree. The lint command passes.
 ## Source references
 
 - [Coss setup](https://coss.com/ui/docs/get-started.md): components were installed with its documented shadcn CLI method.
-- [Next.js cookies](https://nextjs.org/docs/app/api-reference/functions/cookies): cookie writes run in Route Handlers.
+- [Better Auth stateless sessions](https://better-auth.com/docs/concepts/session-management#stateless-session-management): cookie cache and account cookie.
+- [Better Auth GitHub provider](https://better-auth.com/docs/authentication/github): callback path and email handling.
+- [Better Auth with Next.js](https://better-auth.com/docs/integrations/next): route handler and `nextCookies`.
 - [Bun with Next.js](https://bun.sh/docs/guides/ecosystem/nextjs): Next.js scripts select the Bun runtime explicitly.
 - [Bun Docker images](https://bun.sh/docs/guides/ecosystem/docker): official image and non-root user.
