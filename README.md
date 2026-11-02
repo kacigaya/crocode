@@ -5,10 +5,12 @@
 <h1 align="center">CroCode</h1>
 
 <p align="center">
-  <strong>Self-hostable AI code review for GitHub. CroCode runs Claude Code,
+  <strong>Self-hostable AI code review for GitHub.</strong>
+  <br>
+   <em>CroCode runs Claude Code,
   Codex, or OpenCode in a read-only container, checks every finding against
   the diff, and posts inline review comments with severity and suggested
-  fixes.</strong>
+  fixes.</em>
 </p>
 
 <p align="center">
