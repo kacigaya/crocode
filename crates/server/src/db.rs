@@ -489,22 +489,186 @@ const REVIEW_COLUMNS: &str = "r.id, r.installation_id, r.repo_full_name, r.pr_nu
     (SELECT count(*) FROM findings f WHERE f.review_id = r.id) AS finding_count,
     r.error, r.created_at, r.finished_at";
 
+/// Reviews of one installation, newest first. `pull` limits the list to one
+/// pull request as `(repo_full_name, number)`.
 pub async fn list_reviews(
     db: &Db,
     installation_id: i64,
     before: Option<DateTime<Utc>>,
+    pull: Option<(&str, i32)>,
     limit: i64,
 ) -> sqlx::Result<Vec<ReviewRow>> {
     let sql = format!(
         "SELECT {REVIEW_COLUMNS} FROM reviews r
          WHERE r.installation_id = $1 AND ($2::timestamptz IS NULL OR r.created_at < $2)
-         ORDER BY r.created_at DESC LIMIT $3"
+           AND ($3::text IS NULL OR (r.repo_full_name = $3 AND r.pr_number = $4))
+         ORDER BY r.created_at DESC LIMIT $5"
     );
     // The query text is built from constants only.
     sqlx::query_as(sqlx::AssertSqlSafe(sql))
         .bind(installation_id)
         .bind(before)
+        .bind(pull.map(|(repo, _)| repo))
+        .bind(pull.map(|(_, number)| number))
         .bind(limit)
+        .fetch_all(db)
+        .await
+}
+
+/// The newest review of each listed pull request.
+pub async fn latest_reviews(
+    db: &Db,
+    installation_id: i64,
+    pulls: &[(String, i32)],
+) -> sqlx::Result<Vec<ReviewRow>> {
+    let (repos, numbers): (Vec<&str>, Vec<i32>) =
+        pulls.iter().map(|(repo, n)| (repo.as_str(), *n)).unzip();
+    let sql = format!(
+        "SELECT DISTINCT ON (r.repo_full_name, r.pr_number) {REVIEW_COLUMNS} FROM reviews r
+         WHERE r.installation_id = $1
+           AND (r.repo_full_name, r.pr_number) IN (SELECT * FROM unnest($2::text[], $3::int[]))
+         ORDER BY r.repo_full_name, r.pr_number, r.created_at DESC"
+    );
+    sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(installation_id)
+        .bind(repos)
+        .bind(numbers)
+        .fetch_all(db)
+        .await
+}
+
+/// Days of history in [`stats`]. Matches the review retention in [`prune_reviews`].
+pub const STATS_DAYS: i32 = 30;
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct ReviewTotals {
+    pub reviews: i64,
+    pub succeeded: i64,
+    pub failed: i64,
+    pub in_progress: i64,
+    pub pull_requests: i64,
+    pub repositories: i64,
+    /// From queue to result, for succeeded reviews.
+    pub median_duration_secs: Option<f64>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct Count {
+    pub name: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct Day {
+    pub date: String,
+    pub reviews: i64,
+    pub failed: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Stats {
+    pub days: i32,
+    #[serde(flatten)]
+    pub totals: ReviewTotals,
+    pub findings: i64,
+    pub published: i64,
+    pub severity: Vec<Count>,
+    /// The five most common categories.
+    pub categories: Vec<Count>,
+    /// One entry per UTC day, oldest first.
+    pub daily: Vec<Day>,
+}
+
+pub async fn stats(db: &Db, installation_id: i64) -> sqlx::Result<Stats> {
+    let mut tx = db.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let totals: ReviewTotals = sqlx::query_as(
+        "SELECT count(*) AS reviews,
+                count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
+                count(*) FILTER (WHERE status = 'failed') AS failed,
+                count(*) FILTER (WHERE status IN ('queued', 'running')) AS in_progress,
+                count(DISTINCT (repo_full_name, pr_number)) AS pull_requests,
+                count(DISTINCT repo_full_name) AS repositories,
+                percentile_cont(0.5) WITHIN GROUP (
+                    ORDER BY extract(epoch FROM finished_at - created_at)::float8
+                ) FILTER (WHERE status = 'succeeded' AND finished_at IS NOT NULL)
+                    AS median_duration_secs
+         FROM reviews
+         WHERE installation_id = $1 AND created_at >= now() - make_interval(days => $2)",
+    )
+    .bind(installation_id)
+    .bind(STATS_DAYS)
+    .fetch_one(&mut *tx)
+    .await?;
+    const FINDINGS: &str = "FROM findings f JOIN reviews r ON r.id = f.review_id
+         WHERE r.installation_id = $1 AND r.created_at >= now() - make_interval(days => $2)";
+    let (findings, published): (i64, i64) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT count(*), count(*) FILTER (WHERE f.published) {FINDINGS}"
+    )))
+    .bind(installation_id)
+    .bind(STATS_DAYS)
+    .fetch_one(&mut *tx)
+    .await?;
+    let severity: Vec<Count> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT f.severity AS name, count(*) AS count {FINDINGS} GROUP BY f.severity"
+    )))
+    .bind(installation_id)
+    .bind(STATS_DAYS)
+    .fetch_all(&mut *tx)
+    .await?;
+    let categories: Vec<Count> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT f.category AS name, count(*) AS count {FINDINGS}
+         GROUP BY f.category ORDER BY count(*) DESC, f.category LIMIT 5"
+    )))
+    .bind(installation_id)
+    .bind(STATS_DAYS)
+    .fetch_all(&mut *tx)
+    .await?;
+    let daily: Vec<Day> = sqlx::query_as(
+        "SELECT to_char(d.day, 'YYYY-MM-DD') AS date,
+                count(r.id) AS reviews,
+                count(r.id) FILTER (WHERE r.status = 'failed') AS failed
+         FROM generate_series(
+                (now() AT TIME ZONE 'UTC')::date - ($2 - 1),
+                (now() AT TIME ZONE 'UTC')::date,
+                interval '1 day') AS d(day)
+         LEFT JOIN reviews r ON r.installation_id = $1
+              AND (r.created_at AT TIME ZONE 'UTC')::date = d.day::date
+         GROUP BY d.day ORDER BY d.day",
+    )
+    .bind(installation_id)
+    .bind(STATS_DAYS)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Stats {
+        days: STATS_DAYS,
+        totals,
+        findings,
+        published,
+        severity,
+        categories,
+        daily,
+    })
+}
+
+pub async fn save_agent_models<T: Serialize>(db: &Db, agent: &str, models: &T) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO agent_models (agent, models, detected_at) VALUES ($1, $2, now())
+         ON CONFLICT (agent) DO UPDATE SET models = EXCLUDED.models, detected_at = now()",
+    )
+    .bind(agent)
+    .bind(sqlx::types::Json(models))
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Stored model lists by agent name.
+pub async fn agent_models(db: &Db) -> sqlx::Result<Vec<(String, serde_json::Value)>> {
+    sqlx::query_as("SELECT agent, models FROM agent_models ORDER BY agent")
         .fetch_all(db)
         .await
 }

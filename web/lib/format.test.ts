@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { formatDuration, formatRelative } from "./format";
+import { formatDuration, formatRelative, formatSeconds } from "./format";
 
 const now = Date.parse("2026-11-01T14:00:00Z");
 
@@ -32,5 +32,14 @@ describe("formatDuration", () => {
     expect(
       formatDuration("2026-11-01T10:00:00Z", "2026-11-01T09:00:00Z"),
     ).toBeNull();
+  });
+});
+
+describe("formatSeconds", () => {
+  test("rounds and rejects bad values", () => {
+    expect(formatSeconds(89.6)).toBe("1m 30s");
+    expect(formatSeconds(null)).toBeNull();
+    expect(formatSeconds(-1)).toBeNull();
+    expect(formatSeconds(Number.NaN)).toBeNull();
   });
 });

@@ -34,6 +34,7 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
         tasks.spawn(async move { slot_loop(state, id, shutdown).await });
     }
     tasks.spawn(reaper(state.clone(), shutdown.clone()));
+    tasks.spawn(crate::models::refresh_loop(state.clone(), shutdown.clone()));
     while tasks.join_next().await.is_some() {}
     info!("worker stopped");
 }

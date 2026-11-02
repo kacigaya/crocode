@@ -34,7 +34,10 @@ pub fn router() -> Router<AppState> {
         .route("/installations/{id}", get(get_installation))
         .route("/installations/{id}/settings", patch(update_settings))
         .route("/installations/{id}/reviews", get(list_reviews))
+        .route("/installations/{id}/stats", get(installation_stats))
+        .route("/installations/{id}/pulls", get(open_pulls))
         .route("/reviews/{id}", get(get_review))
+        .route("/reviews/{id}/pull", get(review_pull))
 }
 
 pub struct ApiError(StatusCode, String);
@@ -68,28 +71,72 @@ pub struct Access {
     pub installations: HashMap<i64, bool>,
 }
 
-#[derive(Default)]
-pub struct AuthCache {
-    entries: Mutex<HashMap<[u8; 32], (Instant, Access)>>,
+/// Small in-memory cache. Entries expire after [`CACHE_TTL`].
+pub struct TtlCache<K, V> {
+    entries: Mutex<HashMap<K, (Instant, V)>>,
 }
 
-impl AuthCache {
-    fn get(&self, key: &[u8; 32]) -> Option<Access> {
+impl<K, V> Default for TtlCache<K, V> {
+    fn default() -> Self {
+        Self {
+            entries: Mutex::default(),
+        }
+    }
+}
+
+impl<K: Eq + std::hash::Hash, V: Clone> TtlCache<K, V> {
+    pub(crate) fn get(&self, key: &K) -> Option<V> {
         let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         entries
             .get(key)
             .filter(|(at, _)| at.elapsed() < CACHE_TTL)
-            .map(|(_, access)| access.clone())
+            .map(|(_, value)| value.clone())
     }
 
-    fn put(&self, key: [u8; 32], access: Access) {
+    pub(crate) fn put(&self, key: K, value: V) {
         let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         if entries.len() >= CACHE_MAX {
             entries.retain(|_, (at, _)| at.elapsed() < CACHE_TTL);
         }
         if entries.len() < CACHE_MAX {
-            entries.insert(key, (Instant::now(), access));
+            entries.insert(key, (Instant::now(), value));
         }
+    }
+}
+
+/// Keyed by token hash, so raw tokens are not kept in memory.
+pub type AuthCache = TtlCache<[u8; 32], Access>;
+/// Open pull requests by token hash and installation. GitHub search allows
+/// 30 requests per minute for each user.
+pub type PullCache = TtlCache<([u8; 32], i64), OpenPulls>;
+
+/// The bearer token of the request, for calls to GitHub as the user.
+/// Handlers that take it must also take [`Access`], which checks the token.
+pub struct UserToken(String);
+
+impl UserToken {
+    fn key(&self) -> [u8; 32] {
+        Sha256::digest(self.0.as_bytes()).into()
+    }
+}
+
+fn bearer(parts: &Parts) -> Option<&str> {
+    parts
+        .headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && t.len() < 512)
+}
+
+impl FromRequestParts<AppState> for UserToken {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, _: &AppState) -> Result<Self, ApiError> {
+        bearer(parts)
+            .map(|token| Self(token.to_owned()))
+            .ok_or_else(|| ApiError::new(StatusCode::UNAUTHORIZED, "missing or invalid token"))
     }
 }
 
@@ -98,14 +145,7 @@ impl FromRequestParts<AppState> for Access {
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
         let unauthorized = || ApiError::new(StatusCode::UNAUTHORIZED, "missing or invalid token");
-        let token = parts
-            .headers
-            .get("authorization")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(str::trim)
-            .filter(|t| !t.is_empty() && t.len() < 512)
-            .ok_or_else(unauthorized)?;
+        let token = bearer(parts).ok_or_else(unauthorized)?;
         // Key the cache by hash so raw tokens are not kept in memory.
         let key: [u8; 32] = Sha256::digest(token.as_bytes()).into();
         if let Some(access) = state.auth.get(&key) {
@@ -156,9 +196,26 @@ async fn me(access: Access) -> ApiResult<github::User> {
     Ok(Json(access.user))
 }
 
-async fn agents(State(state): State<AppState>) -> Json<serde_json::Value> {
+/// Needs a token: OpenCode model lists show which providers have keys.
+async fn agents(State(state): State<AppState>, _: Access) -> ApiResult<serde_json::Value> {
     let names: Vec<&str> = state.settings.agents.iter().map(|a| a.name()).collect();
-    Json(json!({ "agents": names, "default": state.settings.default_agent.name() }))
+    // Only enabled agents. An agent without a stored list maps to `[]`.
+    let stored: HashMap<String, serde_json::Value> =
+        db::agent_models(&state.db).await?.into_iter().collect();
+    let models: serde_json::Map<String, serde_json::Value> = names
+        .iter()
+        .map(|name| {
+            (
+                name.to_string(),
+                stored.get(*name).cloned().unwrap_or(json!([])),
+            )
+        })
+        .collect();
+    Ok(Json(json!({
+        "agents": names,
+        "default": state.settings.default_agent.name(),
+        "models": models,
+    })))
 }
 
 #[derive(Serialize)]
@@ -303,6 +360,9 @@ async fn update_settings(
 struct ReviewQuery {
     limit: Option<i64>,
     before: Option<DateTime<Utc>>,
+    /// With `pr`, lists the reviews of one pull request.
+    repo: Option<String>,
+    pr: Option<i32>,
 }
 
 async fn list_reviews(
@@ -313,9 +373,148 @@ async fn list_reviews(
 ) -> ApiResult<Vec<db::ReviewRow>> {
     access.require(id)?;
     let limit = q.limit.unwrap_or(50).clamp(1, 100);
+    let pull = match (q.repo.as_deref(), q.pr) {
+        (None, None) => None,
+        (Some(repo), Some(pr)) if github::valid_repo_name(repo) && pr > 0 => Some((repo, pr)),
+        _ => {
+            return Err(ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "repo and pr must be set together",
+            ));
+        }
+    };
     Ok(Json(
-        db::list_reviews(&state.db, id, q.before, limit).await?,
+        db::list_reviews(&state.db, id, q.before, pull, limit).await?,
     ))
+}
+
+async fn installation_stats(
+    State(state): State<AppState>,
+    access: Access,
+    Path(id): Path<i64>,
+) -> ApiResult<db::Stats> {
+    access.require(id)?;
+    Ok(Json(db::stats(&state.db, id).await?))
+}
+
+#[derive(Clone, Serialize)]
+pub struct OpenPulls {
+    /// True when the account has more open pull requests than listed.
+    truncated: bool,
+    pulls: Vec<OpenPull>,
+}
+
+#[derive(Clone, Serialize)]
+struct OpenPull {
+    #[serde(flatten)]
+    pull: github::OpenPull,
+    /// The newest CroCode review of this pull request, if any.
+    review: Option<LatestReview>,
+}
+
+#[derive(Clone, Serialize)]
+struct LatestReview {
+    id: Uuid,
+    status: String,
+    head_sha: String,
+    finding_count: i64,
+    created_at: DateTime<Utc>,
+}
+
+fn github_error(err: impl std::fmt::Display) -> ApiError {
+    tracing::warn!(error = %err, "GitHub request for the dashboard failed");
+    ApiError::new(StatusCode::BAD_GATEWAY, "GitHub request failed")
+}
+
+/// Open pull requests in the installation repositories that the user can access.
+async fn open_pulls(
+    State(state): State<AppState>,
+    access: Access,
+    token: UserToken,
+    Path(id): Path<i64>,
+) -> ApiResult<OpenPulls> {
+    let (installation, _) = load_installation(&state, &access, id).await?;
+    let key = (token.key(), id);
+    if let Some(cached) = state.pulls.get(&key) {
+        return Ok(Json(cached));
+    }
+    let client = state.github.user_client(&token.0).map_err(github_error)?;
+    let repos: std::collections::HashSet<String> = github::user_installation_repos(&client, id)
+        .await
+        .map_err(github_error)?
+        .into_iter()
+        .collect();
+    let (found, more) = github::search_open_pulls(
+        &client,
+        &installation.account_login,
+        installation.account_type == "Organization",
+    )
+    .await
+    .map_err(github_error)?;
+    // Search also finds public repositories outside the installation.
+    let found: Vec<github::OpenPull> = found
+        .into_iter()
+        .filter(|p| repos.contains(&p.repo_full_name))
+        .collect();
+    let keys: Vec<(String, i32)> = found
+        .iter()
+        .filter_map(|p| Some((p.repo_full_name.clone(), i32::try_from(p.number).ok()?)))
+        .collect();
+    let mut latest: HashMap<(String, i32), db::ReviewRow> =
+        db::latest_reviews(&state.db, id, &keys)
+            .await?
+            .into_iter()
+            .map(|r| ((r.repo_full_name.clone(), r.pr_number), r))
+            .collect();
+    let pulls = found
+        .into_iter()
+        .map(|pull| {
+            let review = i32::try_from(pull.number)
+                .ok()
+                .and_then(|n| latest.remove(&(pull.repo_full_name.clone(), n)))
+                .map(|r| LatestReview {
+                    id: r.id,
+                    status: r.status,
+                    head_sha: r.head_sha,
+                    finding_count: r.finding_count,
+                    created_at: r.created_at,
+                });
+            OpenPull { pull, review }
+        })
+        .collect();
+    let result = OpenPulls {
+        truncated: more,
+        pulls,
+    };
+    state.pulls.put(key, result.clone());
+    Ok(Json(result))
+}
+
+/// Live pull request details from GitHub for a review page.
+async fn review_pull(
+    State(state): State<AppState>,
+    access: Access,
+    token: UserToken,
+    Path(id): Path<Uuid>,
+) -> ApiResult<github::PullDetail> {
+    let not_found = || ApiError::new(StatusCode::NOT_FOUND, "review not found");
+    let (review, _) = db::review(&state.db, id).await?.ok_or_else(not_found)?;
+    if !access.installations.contains_key(&review.installation_id) {
+        return Err(not_found());
+    }
+    let client = state.github.user_client(&token.0).map_err(github_error)?;
+    let pull = github::user_pull(&client, &review.repo_full_name, review.pr_number.into())
+        .await
+        .map_err(|err| {
+            match err
+                .downcast_ref::<octocrab::Error>()
+                .and_then(github::status_code)
+            {
+                Some(403 | 404) => not_found(),
+                _ => github_error(err),
+            }
+        })?;
+    Ok(Json(pull))
 }
 
 #[derive(Serialize)]

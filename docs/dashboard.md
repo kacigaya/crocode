@@ -87,6 +87,11 @@ Sign-in and sign-out are Server Actions. Both require an Origin header that
 matches `BETTER_AUTH_URL`. A reverse proxy must preserve the public Host or
 X-Forwarded-Host value.
 
+Each installation has an Overview tab and a Settings tab. The overview shows
+30-day review totals, open pull requests from GitHub, reviews per day, findings
+by severity, and the review history. A GitHub failure hides only the open pull
+requests. The model field suggests the models that the selected agent CLI reports.
+
 Settings saves check `can_admin` again on the server. They validate the selected
 agent against `/api/v1/agents`. An empty model becomes `null`.
 Review summaries, finding bodies, and suggestions render as escaped text.

@@ -21,6 +21,7 @@ fn state(pool: PgPool) -> AppState {
         github: GitHub::for_test(),
         settings: Arc::new(Settings::for_test()),
         auth: Arc::default(),
+        pulls: Arc::default(),
     }
 }
 
@@ -642,4 +643,175 @@ async fn runtime_connection_rejects_database_administrator(pool: PgPool) {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("restricted runtime role"));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "needs DATABASE_URL"]
+async fn stats_count_the_window_and_fill_every_day(pool: PgPool) {
+    installation(&pool, 1).await;
+    installation(&pool, 2).await;
+    let done = enqueue(&pool, 1, 1).await;
+    let failed = enqueue(&pool, 1, 2).await;
+    let old = enqueue(&pool, 1, 3).await;
+    enqueue(&pool, 1, 4).await;
+    enqueue(&pool, 2, 1).await;
+    db::insert_findings(
+        &pool,
+        done,
+        10,
+        1,
+        &[finding("a", true), finding("b", false)],
+        &[],
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE reviews SET status = 'succeeded', finished_at = created_at + interval '90 seconds'
+         WHERE id = $1",
+    )
+    .bind(done)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE reviews SET status = 'failed', finished_at = now() WHERE id = $1")
+        .bind(failed)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE reviews SET created_at = now() - interval '45 days' WHERE id = $1")
+        .bind(old)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let stats = db::stats(&pool, 1).await.unwrap();
+    let t = &stats.totals;
+    assert_eq!(
+        (t.reviews, t.succeeded, t.failed, t.in_progress),
+        (3, 1, 1, 1)
+    );
+    assert_eq!((t.pull_requests, t.repositories), (3, 1));
+    assert_eq!(t.median_duration_secs, Some(90.0));
+    assert_eq!((stats.findings, stats.published), (2, 1));
+    assert_eq!(stats.severity[0].name, "high");
+    assert_eq!(stats.categories[0].count, 2);
+    assert_eq!(stats.daily.len(), db::STATS_DAYS as usize);
+    let today = stats.daily.last().unwrap();
+    assert_eq!((today.reviews, today.failed), (3, 1));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "needs DATABASE_URL"]
+async fn pull_filters_and_latest_review_per_pull(pool: PgPool) {
+    installation(&pool, 1).await;
+    let first = enqueue(&pool, 1, 1).await;
+    let other = enqueue(&pool, 1, 2).await;
+    let newest = db::enqueue_review(
+        &pool,
+        &db::NewReview {
+            installation_id: 1,
+            repo_id: 10,
+            repo_full_name: "acme/api",
+            pr_number: 1,
+            pr_title: "Fix login",
+            head_sha: "head2",
+            base_sha: "base",
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    sqlx::query("UPDATE reviews SET created_at = now() - interval '1 hour' WHERE id = $1")
+        .bind(first)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let timeline = db::list_reviews(&pool, 1, None, Some(("acme/api", 1)), 50)
+        .await
+        .unwrap();
+    let ids: Vec<Uuid> = timeline.iter().map(|r| r.id).collect();
+    assert_eq!(ids, [newest, first]);
+
+    let latest = db::latest_reviews(
+        &pool,
+        1,
+        &[
+            ("acme/api".into(), 1),
+            ("acme/api".into(), 2),
+            ("acme/web".into(), 1),
+        ],
+    )
+    .await
+    .unwrap();
+    let mut ids: Vec<Uuid> = latest.iter().map(|r| r.id).collect();
+    ids.sort();
+    let mut expected = vec![newest, other];
+    expected.sort();
+    assert_eq!(ids, expected);
+    assert!(
+        db::latest_reviews(&pool, 2, &[("acme/api".into(), 1)])
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "needs DATABASE_URL"]
+async fn agent_models_replace_and_show_only_enabled_agents(pool: PgPool) {
+    let model = |id: &str| crate::models::Model {
+        id: id.into(),
+        name: id.into(),
+    };
+    db::save_agent_models(&pool, "codex", &[model("old")])
+        .await
+        .unwrap();
+    db::save_agent_models(&pool, "codex", &[model("gpt-6")])
+        .await
+        .unwrap();
+    db::save_agent_models(&pool, "retired", &[model("x")])
+        .await
+        .unwrap();
+    let mut state = state(pool);
+    let mut settings = Settings::for_test();
+    settings.agents = vec![crate::agents::Agent::Codex, crate::agents::Agent::Claude];
+    settings.default_agent = crate::agents::Agent::Codex;
+    state.settings = Arc::new(settings);
+    let key: [u8; 32] = <Sha256 as sha2::Digest>::digest(b"test-token").into();
+    state.auth.put(
+        key,
+        crate::api::Access {
+            user: crate::github::User {
+                id: 1,
+                login: "octocat".into(),
+            },
+            installations: Default::default(),
+        },
+    );
+    let anonymous = router(state.clone())
+        .oneshot(Request::get("/api/v1/agents").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+    let response = router(state)
+        .oneshot(
+            Request::get("/api/v1/agents")
+                .header("authorization", "Bearer test-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(
+        body,
+        json!({
+            "agents": ["codex", "claude"],
+            "default": "codex",
+            "models": {"codex": [{"id": "gpt-6", "name": "gpt-6"}], "claude": []},
+        })
+    );
 }

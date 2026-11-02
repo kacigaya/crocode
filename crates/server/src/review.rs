@@ -250,6 +250,7 @@ pub async fn execute(
                 env,
                 passthrough: passthrough.clone(),
                 stdin: text.clone(),
+                codex_auth: agent == Agent::Codex,
             },
             cancel,
         )
@@ -570,12 +571,12 @@ pub fn redact(text: &str, secrets: &[String]) -> String {
 }
 
 /// Job directory that is removed when dropped.
-struct WorkDir {
-    path: PathBuf,
+pub(crate) struct WorkDir {
+    pub(crate) path: PathBuf,
 }
 
 impl WorkDir {
-    async fn create(root: &Path, name: &str) -> anyhow::Result<Self> {
+    pub(crate) async fn create(root: &Path, name: &str) -> anyhow::Result<Self> {
         let path = root.join(name);
         if tokio::fs::try_exists(&path).await? {
             tokio::fs::remove_dir_all(&path).await?;

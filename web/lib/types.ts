@@ -1,5 +1,11 @@
 export type User = { id: number; login: string };
-export type Agents = { agents: string[]; default: string };
+export type AgentModel = { id: string; name: string };
+export type Agents = {
+  agents: string[];
+  default: string;
+  /** Models each enabled agent CLI reports. Empty until the worker detects them. */
+  models: Record<string, AgentModel[]>;
+};
 /** Form value for "use the server default agent". The API stores it as null. */
 export const DEFAULT_AGENT = "default";
 
@@ -67,4 +73,57 @@ export type ReviewDetail = {
   findings: Finding[];
   /** Empty for reviews stored before patches were kept. */
   files?: ReviewFile[];
+};
+
+export type NameCount = { name: string; count: number };
+/** Totals for the last `days` days. */
+export type Stats = {
+  days: number;
+  reviews: number;
+  succeeded: number;
+  failed: number;
+  in_progress: number;
+  pull_requests: number;
+  repositories: number;
+  /** From queue to result, for succeeded reviews. */
+  median_duration_secs: number | null;
+  findings: number;
+  published: number;
+  severity: NameCount[];
+  categories: NameCount[];
+  /** One entry per UTC day, oldest first. */
+  daily: { date: string; reviews: number; failed: number }[];
+};
+export type OpenPull = {
+  repo_full_name: string;
+  number: number;
+  title: string;
+  draft: boolean;
+  author: string | null;
+  author_id: number | null;
+  comments: number;
+  created_at: string;
+  updated_at: string;
+  review: {
+    id: string;
+    status: ReviewStatus;
+    head_sha: string;
+    finding_count: number;
+    created_at: string;
+  } | null;
+};
+export type OpenPulls = { truncated: boolean; pulls: OpenPull[] };
+/** Live pull request details from GitHub. */
+export type PullDetail = {
+  state: "open" | "closed" | "merged";
+  draft: boolean;
+  author: string | null;
+  author_id: number | null;
+  base_ref: string;
+  head_ref: string;
+  additions: number;
+  deletions: number;
+  changed_files: number;
+  commits: number;
+  created_at: string;
 };

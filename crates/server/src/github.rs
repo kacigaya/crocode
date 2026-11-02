@@ -309,6 +309,182 @@ pub async fn user_installations(client: &Octocrab) -> octocrab::Result<Vec<UserI
     Ok(out)
 }
 
+/// Repositories of one installation that the user can access.
+pub async fn user_installation_repos(
+    client: &Octocrab,
+    installation_id: i64,
+) -> octocrab::Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct Repo {
+        full_name: String,
+    }
+    #[derive(Deserialize)]
+    struct Page {
+        repositories: Vec<Repo>,
+    }
+    let mut out = Vec::new();
+    for page in 1..=10u32 {
+        let batch: Page = client
+            .get(
+                format!("/user/installations/{installation_id}/repositories"),
+                Some(&[("per_page", 100u32), ("page", page)]),
+            )
+            .await?;
+        let done = batch.repositories.len() < 100;
+        out.extend(batch.repositories.into_iter().map(|r| r.full_name));
+        if done {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OpenPull {
+    pub repo_full_name: String,
+    pub number: i64,
+    pub title: String,
+    pub draft: bool,
+    pub author: Option<String>,
+    pub author_id: Option<i64>,
+    pub comments: i64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Up to 100 open pull requests in repositories of `owner`, last updated first.
+/// The bool is true when GitHub has more results than it returned.
+pub async fn search_open_pulls(
+    client: &Octocrab,
+    owner: &str,
+    organization: bool,
+) -> Result<(Vec<OpenPull>, bool)> {
+    #[derive(Deserialize)]
+    struct Author {
+        login: String,
+        id: i64,
+    }
+    #[derive(Deserialize)]
+    struct Item {
+        number: i64,
+        title: String,
+        draft: Option<bool>,
+        user: Option<Author>,
+        comments: i64,
+        repository_url: String,
+        created_at: chrono::DateTime<chrono::Utc>,
+        updated_at: chrono::DateTime<chrono::Utc>,
+    }
+    #[derive(Deserialize)]
+    struct Page {
+        total_count: u64,
+        incomplete_results: bool,
+        items: Vec<Item>,
+    }
+    if !valid_repo_name(&format!("{owner}/x")) {
+        bail!("invalid account name");
+    }
+    let qualifier = if organization { "org" } else { "user" };
+    let query = format!("is:pr is:open archived:false {qualifier}:{owner}");
+    let page: Page = client
+        .get(
+            "/search/issues",
+            Some(&[
+                ("q", query.as_str()),
+                ("sort", "updated"),
+                ("order", "desc"),
+                ("per_page", "100"),
+            ]),
+        )
+        .await?;
+    let more = page.incomplete_results || page.total_count > page.items.len() as u64;
+    let pulls = page
+        .items
+        .into_iter()
+        .filter_map(|item| {
+            // `https://api.github.com/repos/{owner}/{name}`
+            let mut parts = item.repository_url.rsplit('/');
+            let name = parts.next()?;
+            let owner = parts.next()?;
+            let repo_full_name = format!("{owner}/{name}");
+            valid_repo_name(&repo_full_name).then(|| OpenPull {
+                repo_full_name,
+                number: item.number,
+                title: item.title,
+                draft: item.draft.unwrap_or(false),
+                author: item.user.as_ref().map(|u| u.login.clone()),
+                author_id: item.user.map(|u| u.id),
+                comments: item.comments,
+                created_at: item.created_at,
+                updated_at: item.updated_at,
+            })
+        })
+        .collect();
+    Ok((pulls, more))
+}
+
+#[derive(Debug, Serialize)]
+pub struct PullDetail {
+    /// `open`, `closed`, or `merged`.
+    pub state: String,
+    pub draft: bool,
+    pub author: Option<String>,
+    pub author_id: Option<i64>,
+    pub base_ref: String,
+    pub head_ref: String,
+    pub additions: u64,
+    pub deletions: u64,
+    pub changed_files: u64,
+    pub commits: u64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// One pull request as the user sees it.
+pub async fn user_pull(client: &Octocrab, repo: &str, number: i64) -> Result<PullDetail> {
+    #[derive(Deserialize)]
+    struct Author {
+        login: String,
+        id: i64,
+    }
+    #[derive(Deserialize)]
+    struct Raw {
+        state: String,
+        merged: Option<bool>,
+        draft: Option<bool>,
+        user: Option<Author>,
+        base: GitRef,
+        head: GitRef,
+        additions: u64,
+        deletions: u64,
+        changed_files: u64,
+        commits: u64,
+        created_at: chrono::DateTime<chrono::Utc>,
+    }
+    if !valid_repo_name(repo) {
+        bail!("invalid repository name");
+    }
+    let raw: Raw = client
+        .get(format!("/repos/{repo}/pulls/{number}"), None::<&()>)
+        .await?;
+    Ok(PullDetail {
+        state: if raw.merged == Some(true) {
+            "merged".into()
+        } else {
+            raw.state
+        },
+        draft: raw.draft.unwrap_or(false),
+        author: raw.user.as_ref().map(|u| u.login.clone()),
+        author_id: raw.user.map(|u| u.id),
+        base_ref: raw.base.name,
+        head_ref: raw.head.name,
+        additions: raw.additions,
+        deletions: raw.deletions,
+        changed_files: raw.changed_files,
+        commits: raw.commits,
+        created_at: raw.created_at,
+    })
+}
+
 /// True when the user is an active admin of the organization. Needs the
 /// app's "Members: read" organization permission; on any error it says no.
 pub async fn is_org_admin(client: &Octocrab, org: &str) -> bool {

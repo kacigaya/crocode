@@ -37,6 +37,7 @@ const review = {
 let apiStatus = 200;
 let canAdmin = true;
 let empty = false;
+let pullsFail = false;
 const calls: string[] = [];
 const patches: unknown[] = [];
 const mock = Bun.serve({
@@ -51,7 +52,14 @@ const mock = Bun.serve({
     if (url.pathname.endsWith("/me"))
       return Response.json({ id: 1, login: "octocat" });
     if (url.pathname.endsWith("/agents"))
-      return Response.json({ agents: ["codex", "claude"], default: "codex" });
+      return Response.json({
+        agents: ["codex", "claude"],
+        default: "codex",
+        models: {
+          codex: [{ id: "gpt-smoke", name: "GPT Smoke" }],
+          claude: [{ id: "opus", name: "opus" }],
+        },
+      });
     if (url.pathname.endsWith("/settings") && request.method === "PATCH") {
       const body: unknown = await request.json();
       patches.push(body);
@@ -63,6 +71,56 @@ const mock = Bun.serve({
       );
     if (url.pathname === "/api/v1/installations/123")
       return Response.json({ ...installation, can_admin: canAdmin });
+    if (url.pathname === "/api/v1/installations/123/stats")
+      return Response.json({
+        days: 30,
+        reviews: 20,
+        succeeded: 19,
+        failed: 1,
+        in_progress: 0,
+        pull_requests: 2,
+        repositories: 1,
+        median_duration_secs: 180,
+        findings: 2,
+        published: 2,
+        severity: [
+          { name: "high", count: 1 },
+          { name: "low", count: 1 },
+        ],
+        categories: [{ name: "security", count: 2 }],
+        daily: Array.from({ length: 30 }, (_, i) => ({
+          date: `2026-10-${String(i + 1).padStart(2, "0")}`,
+          reviews: i === 29 ? 20 : 0,
+          failed: i === 29 ? 1 : 0,
+        })),
+      });
+    if (url.pathname === "/api/v1/installations/123/pulls") {
+      if (pullsFail) return Response.json({ error: "GitHub" }, { status: 502 });
+      return Response.json({
+        truncated: false,
+        pulls: [
+          {
+            repo_full_name: "acme/api",
+            number: 43,
+            title: "<b>Open pull request</b>",
+            draft: false,
+            author: "octocat",
+            author_id: 1,
+            comments: 0,
+            created_at: "2026-11-01T09:00:00Z",
+            updated_at: "2026-11-01T10:00:00Z",
+            review: null,
+          },
+        ],
+      });
+    }
+    if (url.pathname === `/api/v1/reviews/${reviewId}/pull`)
+      return Response.json({ error: "Not found" }, { status: 404 });
+    if (
+      url.pathname === "/api/v1/installations/123/reviews" &&
+      url.searchParams.has("pr")
+    )
+      return Response.json([review]);
     if (url.pathname === "/api/v1/installations/123/reviews")
       return Response.json(
         empty || url.searchParams.has("before")
@@ -303,16 +361,32 @@ try {
     !installations.includes(token),
     "Token must not appear in client HTML or RSC data",
   );
-  console.log("Checking settings");
+  console.log("Checking installation overview");
   response = await get("/installations/123");
+  const overview = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(overview, /Load older/);
+  assert.match(overview, /Not reviewed/);
+  assert.ok(overview.includes("&lt;b&gt;Open pull request&lt;/b&gt;"));
+  assert.ok(!overview.includes("<b>Open pull request</b>"));
+  assert.ok(!overview.includes('name="agent"'), "Settings live in their own tab");
+  pullsFail = true;
+  const degraded = await get("/installations/123");
+  assert.equal(degraded.status, 200);
+  assert.match(await degraded.text(), /Cannot load open pull requests/);
+  pullsFail = false;
+  console.log("Checking settings");
+  response = await get("/installations/123/settings");
   const settings = await response.text();
   assert.equal(response.status, 200);
-  assert.match(settings, /Load older/);
+  assert.match(settings, /1 model detected from the codex CLI/);
+  assert.match(settings, /<input[^>]*name="model"/, "Model field submits as model");
+  assert.match(settings, /<input[^>]*name="agent"/, "Agent field submits as agent");
   const form = actionForm(settings, 'name="agent"');
   form.set("agent", "codex");
   form.set("model", "  ");
   console.log("Submitting settings action");
-  const save = await fetch(origin + "/installations/123", {
+  const save = await fetch(origin + "/installations/123/settings", {
     method: "POST",
     headers: { Cookie: sessionCookie, Origin: origin },
     body: form,
@@ -320,19 +394,22 @@ try {
     signal: AbortSignal.timeout(15_000),
   });
   assert.equal(save.status, 303);
-  assert.equal(save.headers.get("location"), "/installations/123?saved=1");
+  assert.equal(
+    save.headers.get("location"),
+    "/installations/123/settings?saved=1",
+  );
   assert.deepEqual(patches, [{ enabled: false, agent: "codex", model: null }]);
   assert.match(
-    await (await get("/installations/123?saved=1")).text(),
+    await (await get("/installations/123/settings?saved=1")).text(),
     /Settings saved/,
   );
   console.log("Checking read-only action");
   canAdmin = false;
-  response = await get("/installations/123");
+  response = await get("/installations/123/settings");
   const readonly = await response.text();
   assert.match(readonly, /Read only/);
   assert.match(readonly, /<fieldset[^>]*disabled/);
-  await fetch(origin + "/installations/123", {
+  await fetch(origin + "/installations/123/settings", {
     method: "POST",
     headers: { Cookie: sessionCookie, Origin: origin },
     body: form,
@@ -357,7 +434,11 @@ try {
   );
   response = await get(`/reviews/${reviewId}`);
   const detail = await response.text();
-  assert.equal(response.status, 200);
+  assert.equal(response.status, 200, "A hidden GitHub pull request keeps the page");
+  assert.match(detail, /This review/);
+  assert.ok(
+    calls.some((call) => call.includes("repo=acme%2Fapi") && call.includes("pr=42")),
+  );
   // Match rendered headings only: the findings also appear in the React
   // Server Components payload, in API order.
   assert.deepEqual(
@@ -486,7 +567,7 @@ try {
       `Sign-out clears ${name}`,
     );
   console.log(
-    "PASS: standalone runtime; public docs, Better Auth GitHub flow, landing, installations, settings, admin guard, pagination, review escaping, empty/404/401, expired token, disabled token endpoints, sign-in and sign-out actions.",
+    "PASS: standalone runtime; public docs, Better Auth GitHub flow, landing, installations, overview, open pull requests and GitHub failure, settings and models, admin guard, pagination, review escaping, empty/404/401, expired token, disabled token endpoints, sign-in and sign-out actions.",
   );
 } catch (error) {
   console.error(output, calls);
