@@ -2,10 +2,14 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { CopyButton } from "@/components/copy-button";
 import { SiteHeader } from "@/components/site-header";
 import { Button } from "@/components/ui/button";
 import { readStoredConfig } from "@/lib/config";
 import { appSettingsUrl } from "@/lib/setup";
+
+/** Badge background that GitHub shows behind the app logo. */
+const BADGE_COLOR = "#0a0a0a";
 
 export const metadata: Metadata = { title: "Setup complete" };
 
@@ -47,8 +51,12 @@ export default function SetupDonePage() {
             <p className="font-medium">Add the logo.</p>
             <p className="mt-1 text-sm text-muted-foreground">
               GitHub has no API for app logos. Download the logo, open the app
-              settings, and use <strong>Upload a logo</strong>. Set the badge
-              background color to <code className="font-mono">#0a0a0a</code>.
+              settings in a new tab, and use <strong>Upload a logo</strong>.
+              Set the badge background color to this value.
+            </p>
+            <p className="mt-2 flex items-center gap-1 text-sm">
+              <code className="font-mono">{BADGE_COLOR}</code>
+              <CopyButton value={BADGE_COLOR} label="badge background color" />
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-3">
               <Image
@@ -64,8 +72,12 @@ export default function SetupDonePage() {
               >
                 Download logo
               </Button>
-              <Button variant="outline" render={<a href={settings} />}>
+              <Button
+                variant="outline"
+                render={<a href={settings} target="_blank" rel="noopener noreferrer" />}
+              >
                 Open app settings
+                <span className="sr-only"> (opens in a new tab)</span>
               </Button>
             </div>
           </li>

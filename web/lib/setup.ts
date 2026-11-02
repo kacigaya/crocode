@@ -22,7 +22,7 @@ export type StoredConfig = {
 
 export const APP_DESCRIPTION = `Self-hosted AI code review for pull requests.
 
-CroCode reviews each new pull request with an AI agent in a read-only sandbox. It posts inline comments with suggested fixes on the changed lines.
+CroCode reviews each new pull request with Claude Code and Codex in a read-only sandbox. It posts inline comments with suggested fixes on the changed lines.
 
 - Reads code and pull requests. It never pushes commits.
 - The review agent gets no GitHub token.
@@ -51,6 +51,14 @@ export function parseOrigin(value: string): string | null {
 /** GitHub organization logins: letters, digits, and single hyphens. */
 export function validOwner(value: string) {
   return /^[a-zA-Z0-9](?:-?[a-zA-Z0-9]){0,38}$/.test(value);
+}
+
+/**
+ * GitHub App names are unique across GitHub, so each install gets a random
+ * suffix, for example `CroCode Bot 3f9a1c`. The owner can still edit it.
+ */
+export function defaultAppName() {
+  return `CroCode Bot ${randomBytes(3).toString("hex")}`;
 }
 
 export function buildManifest(origin: string, name: string) {

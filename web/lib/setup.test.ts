@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildManifest,
+  defaultAppName,
   manifestTarget,
   parseOrigin,
   signState,
@@ -26,6 +27,14 @@ describe("parseOrigin", () => {
       "not a url",
     ])
       expect(parseOrigin(value)).toBeNull();
+  });
+});
+
+describe("defaultAppName", () => {
+  test("adds a random hex suffix within GitHub's name limit", () => {
+    const name = defaultAppName();
+    expect(name).toMatch(/^CroCode Bot [0-9a-f]{6}$/);
+    expect(name.length).toBeLessThanOrEqual(34);
   });
 });
 

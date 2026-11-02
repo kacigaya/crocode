@@ -4,7 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { SetupForm } from "@/components/setup-form";
 import { SiteHeader } from "@/components/site-header";
 import { readStoredConfig, setupAvailable, setupToken } from "@/lib/config";
-import { parseOrigin } from "@/lib/setup";
+import { defaultAppName, parseOrigin } from "@/lib/setup";
 
 export const metadata: Metadata = { title: "Set up" };
 
@@ -44,7 +44,7 @@ export default async function SetupPage({
           defaults={{
             token: typeof token === "string" ? token : "",
             url: await requestOrigin(),
-            name: "CroCode",
+            name: defaultAppName(),
             owner: "",
           }}
         />
