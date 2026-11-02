@@ -96,7 +96,7 @@ cp .env.example .env && chmod 600 .env
    ```
 
 6. Put an HTTPS reverse proxy in front of port 8080. Point the app webhook at `/webhooks/github`.
-7. Copy `web/.env.example` to `web/.env`. Set the app's OAuth client, slug, and a session secret.
+7. Copy `web/.env.example` to `web/.env`. Set the app's OAuth client, slug, `BETTER_AUTH_SECRET`, and `BETTER_AUTH_URL`.
    Then start the dashboard on port 3000.
 
    ```bash

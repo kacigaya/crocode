@@ -7,22 +7,23 @@ It requests only `contents: read` and `pull_requests: write` for that token.
 These steps follow the official [app registration guide](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app) and [permission guide](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app).
 
 1. Choose your public HTTPS address, for example `https://crocode.example.com`.
-   Set `PUBLIC_URL` to that address in `web/.env`.
+   Set `BETTER_AUTH_URL` to that address in `web/.env`.
    Route `/webhooks/github` to the Rust API on port 8080.
-   Route the dashboard and `/api/auth/callback` to the web service on port 3000.
-   Only the dashboard reads `PUBLIC_URL`. The Rust server does not read it.
+   Route the dashboard and `/api/auth/*` to the web service on port 3000.
+   Only the dashboard reads `BETTER_AUTH_URL`. The Rust server does not read it.
 
 2. Open GitHub **Settings > Developer settings > GitHub Apps > New GitHub App**.
    For an organization-owned app, start from that organization's settings.
    Choose a unique app name.
    Set the homepage URL to your public site or this project's repository.
 
-3. Set the user authorization **Callback URL** to `${PUBLIC_URL}/api/auth/callback`.
-   Replace `${PUBLIC_URL}` with the actual address. GitHub does not expand environment variables.
+3. Set the user authorization **Callback URL** to `${BETTER_AUTH_URL}/api/auth/callback/github`.
+   Replace `${BETTER_AUTH_URL}` with the actual address. GitHub does not expand environment variables.
    This is the dashboard OAuth callback, not the webhook URL.
    The Rust API does not implement this callback.
    Record the app's Client ID and create a client secret for the dashboard.
-   Put them in `web/.env` as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. Set `GITHUB_APP_SLUG` and `SESSION_SECRET` there too.
+   Put them in `web/.env` as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`. Set `GITHUB_APP_SLUG` and `BETTER_AUTH_SECRET` there too.
+   The dashboard does not read user email addresses. The app does not need the **Email addresses** permission.
    Do not give the client secret to an agent container.
 
 4. Keep user token expiration enabled.
@@ -32,7 +33,7 @@ These steps follow the official [app registration guide](https://docs.github.com
    See GitHub's [user access token guide](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app).
 
 5. Enable the webhook.
-   Set the **Webhook URL** to `${PUBLIC_URL}/webhooks/github` with the actual public address.
+   Set the **Webhook URL** to `https://<your address>/webhooks/github`.
    Generate a random webhook secret.
 
    ```sh
