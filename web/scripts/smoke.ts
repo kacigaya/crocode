@@ -80,7 +80,7 @@ const mock = Bun.serve({
           { repo_full_name: "acme/api", coverage: "readable", checked_at: "2026-11-02T10:00:00Z", last_success_at: "2026-11-02T10:00:00Z", alerts: [{
             number: 1,
             dependency: { package: { ecosystem: "npm", name: "example" }, manifest_path: "bun.lock", scope: "runtime" },
-            security_advisory: { ghsa_id: "GHSA-example", cve_id: "CVE-2026-1234", summary: "<script>untrusted-advisory</script>" },
+            security_advisory: { ghsa_id: "GHSA-example", cve_id: "CVE-2026-1234", epss: { percentage: 0.00045 }, summary: "<script>untrusted-advisory</script>" },
             security_vulnerability: { severity: "critical", vulnerable_version_range: "< 2", first_patched_version: { identifier: "2.0.0" } },
           }, {
             number: 2,
@@ -432,6 +432,25 @@ try {
   vulnerabilitiesFail = true;
   assert.match(await (await get("/installations/123/vulnerabilities")).text(), /Cannot load vulnerabilities/);
   vulnerabilitiesFail = false;
+  console.log("Checking fix priority queue");
+  const priority = await (await get("/installations/123/vulnerabilities?view=priority")).text();
+  assert.match(priority, /Fix priority queue/);
+  assert.match(priority, /Exploit probability/);
+  assert.match(priority, /0.05%/);
+  assert.match(priority, /Unknown/);
+  assert.match(priority, /The queue is incomplete/);
+  assert.match(priority, /name="view"[^>]*value="priority"/);
+  assert.match(priority, /page=2&amp;view=priority/);
+  assert.ok(!priority.includes("<script>untrusted-advisory</script>"));
+  const filteredQueue = await (await get("/installations/123/vulnerabilities?view=priority&severity=critical")).text();
+  assert.match(filteredQueue, /CVE-2026-1234/);
+  assert.ok(!filteredQueue.includes("GHSA-without-cve"));
+  assert.match(filteredQueue, /page=2&amp;view=priority&amp;severity=critical/);
+  const emptyQueue = await (await get("/installations/123/vulnerabilities?view=priority&q=not-a-match")).text();
+  assert.match(emptyQueue, /No alerts match these filters on this repository page/);
+  vulnerabilitiesFail = true;
+  assert.match(await (await get("/installations/123/vulnerabilities?view=priority")).text(), /Cannot load the priority queue/);
+  vulnerabilitiesFail = false;
   console.log("Checking settings");
   response = await get("/installations/123/settings");
   const settings = await response.text();
@@ -624,7 +643,7 @@ try {
       `Sign-out clears ${name}`,
     );
   console.log(
-    "PASS: standalone runtime; public docs, Better Auth GitHub flow, landing, installations, overview, open pull requests and GitHub failure, vulnerabilities and repository pages, settings and models, admin guard, pagination, review escaping, empty/404/401, expired token, disabled token endpoints, sign-in and sign-out actions.",
+    "PASS: standalone runtime; public docs, Better Auth GitHub flow, landing, installations, overview, open pull requests and GitHub failure, vulnerabilities, fix priority queue and repository pages, settings and models, admin guard, pagination, review escaping, empty/404/401, expired token, disabled token endpoints, sign-in and sign-out actions.",
   );
 } catch (error) {
   console.error(output, calls);

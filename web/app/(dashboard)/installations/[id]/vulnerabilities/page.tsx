@@ -7,6 +7,11 @@ import {
   parseVulnerabilityFilters,
   vulnerabilityPageHref,
 } from "@/lib/vulnerabilities";
+import { VulnerabilityPriorityQueue } from "@/components/vulnerability-priority-queue";
+import {
+  SegmentedControl,
+  SegmentedControlItem,
+} from "@/components/ui/segmented-control";
 import { VulnerabilitiesPanel } from "@/components/vulnerabilities-panel";
 import { Button } from "@/components/ui/button";
 import { optionalApi } from "@/lib/api";
@@ -29,6 +34,7 @@ export default async function VulnerabilitiesPage({
   const search = await searchParams;
   const { page: value } = search;
   const filters = parseVulnerabilityFilters(search);
+  const view = search.view === "priority" ? "priority" : "repositories";
   if (
     !validInstallationId(id) ||
     (value !== undefined &&
@@ -46,12 +52,40 @@ export default async function VulnerabilitiesPage({
   return (
     <>
       {report && <VulnerabilityCoverage report={report} webUrl={webUrl} />}
+      <SegmentedControl aria-label="Vulnerability view" render={<nav />}>
+        {(["repositories", "priority"] as const).map((mode) => (
+          <SegmentedControlItem
+            key={mode}
+            render={
+              <Link
+                href={vulnerabilityPageHref(page, filters, mode)}
+                aria-current={view === mode ? "page" : undefined}
+              />
+            }
+          >
+            {mode === "priority" ? "Fix priority queue" : "By repository"}
+          </SegmentedControlItem>
+        ))}
+      </SegmentedControl>
       <VulnerabilityFiltersForm
-        key={vulnerabilityPageHref(page, filters)}
+        key={vulnerabilityPageHref(page, filters, view)}
         filters={filters}
         page={page}
+        view={view}
       />
-      <VulnerabilitiesPanel report={report} webUrl={webUrl} filters={filters} />
+      {view === "priority" ? (
+        <VulnerabilityPriorityQueue
+          report={report}
+          webUrl={webUrl}
+          filters={filters}
+        />
+      ) : (
+        <VulnerabilitiesPanel
+          report={report}
+          webUrl={webUrl}
+          filters={filters}
+        />
+      )}
       <nav
         aria-label="Repository pages"
         className="flex flex-wrap items-center gap-3"
@@ -59,7 +93,9 @@ export default async function VulnerabilitiesPage({
         {page > 1 && (
           <Button
             variant="outline"
-            render={<Link href={vulnerabilityPageHref(page - 1, filters)} />}
+            render={
+              <Link href={vulnerabilityPageHref(page - 1, filters, view)} />
+            }
           >
             Previous repositories
           </Button>
@@ -71,7 +107,9 @@ export default async function VulnerabilitiesPage({
           <Button
             variant="outline"
             render={
-              <Link href={vulnerabilityPageHref(report.next_page, filters)} />
+              <Link
+                href={vulnerabilityPageHref(report.next_page, filters, view)}
+              />
             }
           >
             Next repositories
