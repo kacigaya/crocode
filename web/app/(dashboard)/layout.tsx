@@ -5,6 +5,7 @@ import {
   type NavInstallation,
 } from "@/components/app-nav";
 import { Brand } from "@/components/brand";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { api } from "@/lib/api";
 import { getEnv } from "@/lib/env";
 import type { Installation, User } from "@/lib/types";
@@ -35,8 +36,9 @@ export default async function DashboardLayout({
       </a>
       <div className="hidden border-r bg-sidebar md:block">
         <aside className="sticky top-0 flex h-dvh flex-col">
-          <div className="flex h-14 items-center px-4">
+          <div className="flex h-14 items-center justify-between px-4">
             <Brand href="/installations" />
+            <ThemeToggle />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
             <AppNav installations={nav} installUrl={installUrl} />

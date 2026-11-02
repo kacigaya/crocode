@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useId, useRef, useState } from "react";
 import { signOut } from "@/app/auth-actions";
 import { Brand, Monogram } from "@/components/brand";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -143,18 +144,21 @@ export function MobileNav(props: NavProps & { login: string }) {
     >
       <div className="flex h-14 items-center justify-between px-4">
         <Brand href="/installations" />
-        <Button
-          ref={toggle}
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-expanded={open}
-          aria-controls={panelId}
-          aria-label={open ? "Close menu" : "Open menu"}
-          onClick={() => setOpen((value) => !value)}
-        >
-          {open ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
-        </Button>
+        <div className="flex items-center gap-1">
+          <ThemeToggle />
+          <Button
+            ref={toggle}
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-expanded={open}
+            aria-controls={panelId}
+            aria-label={open ? "Close menu" : "Open menu"}
+            onClick={() => setOpen((value) => !value)}
+          >
+            {open ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
+          </Button>
+        </div>
       </div>
       <div
         id={panelId}
