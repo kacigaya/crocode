@@ -81,15 +81,32 @@ The deprecated `features.use_legacy_landlock=true` option also failed.
 It reported that restricted execution requires bubblewrap to isolate app-server sockets.
 Adding that option does not fix this version.
 
-1. Set `CROCODE_AGENTS=claude,opencode` on hosts with this failure.
-2. Keep `CROCODE_DEFAULT_AGENT=claude`.
-3. To enable Codex, use a dedicated Docker host or runtime that supports its bubblewrap namespaces.
-4. Repeat the read, blocked-write, and blocked-network probes there before enabling Codex.
+The sandbox image supplies Bubblewrap 0.12.0 on `PATH`, which Codex prefers
+over its bundled copy. Its source archive is pinned by SHA-256. A one-line
+compatibility patch uses `NLM_F_REPLACE` instead of `NLM_F_EXCL` when assigning
+the loopback address. gVisor already assigns that address in a new network
+namespace. Other netlink errors remain fatal. This does not skip namespace
+creation or disable the Codex sandbox.
 
-Keep `--sandbox read-only` and the outer container limits.
-Do not use privileged containers or a sandbox bypass to hide the failure.
-See the official [Linux sandbox prerequisites](https://developers.openai.com/codex/concepts/sandboxing#prerequisites).
-`CROCODE_SANDBOX_RUNTIME=runsc` can select an installed gVisor runtime, but compatibility was not tested here.
+The patch follows the [upstream discussion](https://github.com/containers/bubblewrap/issues/745).
+Remove it when a released Bubblewrap or gVisor handles this case without it.
+
+ARM64 checks on 2026-11-02 passed with `runsc` 20261026.0 and the patched image:
+
+1. Codex sandbox startup succeeded as uid/gid `10001:10001` with all capabilities dropped and no privilege escalation.
+2. Repository reads succeeded. Writes to the repository, `/etc`, and a separate writable outer mount failed.
+3. A direct TCP connection worked outside the Codex sandbox. The same connection failed with `EPERM` inside it.
+
+Repeat the checks on the Docker host with
+`sudo bash docker/sandbox/tests/check-codex.sh`. The test makes a plain TCP
+connection to `1.1.1.1:443` outside the inner sandbox, then checks that Codex
+blocks it. It sends no application data. It needs Internet access.
+The Bubblewrap build runs its upstream test suite; namespace integration tests
+skip in the Docker build stage. The runtime checks cover those boundaries.
+
+Use `CROCODE_SANDBOX_RUNTIME=runsc` for this configuration. Docker's default
+runtime stays `runc`. Re-run these probes before changing Codex, Bubblewrap,
+or gVisor versions. Do not use privileged containers or a sandbox bypass.
 
 An OpenCode project-plugin probe executed code with the old command before model access.
 CroCode now uses `--pure` and disables project config, Claude config, and external skill discovery.

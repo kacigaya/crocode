@@ -199,69 +199,113 @@ pub async fn execute(
     .context("write schema")?;
 
     let paths = sandbox::paths(settings, &work.path);
-    let (argv, env) = agents::command(
-        agent,
-        model.as_deref(),
-        &paths,
-        agents::claude_uses_subscription(),
-    );
-    let passthrough: Vec<String> = agent
-        .env_names()
-        .iter()
-        .map(|s| s.to_string())
-        .chain(settings.agent_env.iter().cloned())
-        .collect();
-    info!(review = %job.id, agent = agent.name(), "agent started");
-    let output = sandbox::run(
-        settings,
-        sandbox::Job {
-            name: format!("crocode-{}", job.id.simple()),
-            repo_dir: &repo_dir,
-            input_dir: &input_dir,
-            output_dir: &output_dir,
-            argv,
-            env,
-            passthrough: passthrough.clone(),
-            stdin: text,
-        },
-        cancel,
-    )
-    .await
-    .map_err(|err| match err {
-        RunError::Cancelled => ReviewError::Cancelled,
-        other => ReviewError::Retry(anyhow!(other)),
-    })?;
-
-    // Agent output can echo credentials if a prompt injection asks for them.
-    // Remove every secret value this worker knows before anything is stored.
-    let mut secrets: Vec<String> = passthrough
-        .iter()
-        .filter_map(|name| std::env::var(name).ok())
-        .collect();
-    secrets.push(gh.token().to_owned());
-    let stdout = redact(&output.stdout, &secrets);
-    let result_file = tokio::fs::read_to_string(output_dir.join(RESULT_FILE))
+    let mut agent = agent;
+    let mut model = model;
+    let mut fallback_used = false;
+    let agent_review = loop {
+        if cancel.is_cancelled() {
+            return Err(ReviewError::Cancelled);
+        }
+        let (argv, env) = agents::command(
+            agent,
+            model.as_deref(),
+            &paths,
+            agents::claude_uses_subscription(),
+        );
+        let passthrough: Vec<String> = agent
+            .env_names()
+            .iter()
+            .map(|s| s.to_string())
+            .chain(settings.agent_env.iter().cloned())
+            .collect();
+        // Keep token snapshots and refreshes under one lock across workers.
+        let _auth_lock = if agent == Agent::Codex {
+            if let Some(directory) = &settings.codex_auth_dir {
+                Some(lock_codex_auth(&state.db, directory, cancel).await?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let mut codex_secrets = if agent == Agent::Codex {
+            sandbox::codex_auth_secrets(settings).await?
+        } else {
+            Vec::new()
+        };
+        info!(review = %job.id, agent = agent.name(), "agent started");
+        let output = sandbox::run(
+            settings,
+            sandbox::Job {
+                name: format!("crocode-{}", job.id.simple()),
+                repo_dir: &repo_dir,
+                input_dir: &input_dir,
+                output_dir: &output_dir,
+                argv,
+                env,
+                passthrough: passthrough.clone(),
+                stdin: text.clone(),
+            },
+            cancel,
+        )
         .await
-        .ok()
-        .map(|t| redact(&t, &secrets));
+        .map_err(|err| match err {
+            RunError::Cancelled => ReviewError::Cancelled,
+            other => ReviewError::Retry(anyhow!(other)),
+        })?;
 
-    let parsed = agents::parse_output(agent, &stdout, result_file.as_deref());
-    let agent_review = match parsed {
-        Ok(review) => review,
-        Err(err) => {
-            let stderr = redact(&output.stderr, &secrets);
-            let tail: String = stderr
-                .chars()
-                .rev()
-                .take(500)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect();
-            return Err(ReviewError::Retry(anyhow!(
-                "{err:#} (exit ok: {}; stderr: {tail})",
-                output.success
-            )));
+        // Agent output can echo credentials if a prompt injection asks for them.
+        // Remove every secret value this worker knows before anything is stored.
+        let mut secrets: Vec<String> = passthrough
+            .iter()
+            .filter_map(|name| std::env::var(name).ok())
+            .collect();
+        secrets.push(gh.token().to_owned());
+        if agent == Agent::Codex {
+            codex_secrets.extend(sandbox::codex_auth_secrets(settings).await?);
+        }
+        secrets.extend(codex_secrets);
+        let stdout = redact(&output.stdout, &secrets);
+        let result_file = tokio::fs::read_to_string(output_dir.join(RESULT_FILE))
+            .await
+            .ok()
+            .map(|t| redact(&t, &secrets));
+
+        let parsed = agents::parse_output(agent, &stdout, result_file.as_deref());
+        match parsed {
+            Ok(review) => break review,
+            Err(err) => {
+                let stderr = redact(&output.stderr, &secrets);
+                if !fallback_used
+                    && let Some(next) =
+                        fallback_for_limit(agent, settings.fallback_agent, &stdout, &stderr)
+                {
+                    warn!(review = %job.id, agent = agent.name(), fallback = next.name(),
+                        "agent usage limit reached; starting fallback");
+                    agent = next;
+                    model = None;
+                    fallback_used = true;
+                    // A partial result from the first agent must not be read by the fallback.
+                    match tokio::fs::remove_file(output_dir.join(RESULT_FILE)).await {
+                        Ok(()) => {}
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(ReviewError::Retry(error.into())),
+                    }
+                    continue;
+                }
+                let tail: String = stderr
+                    .chars()
+                    .rev()
+                    .take(500)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                return Err(ReviewError::Retry(anyhow!(
+                    "{err:#} (exit ok: {}; stderr: {tail})",
+                    output.success
+                )));
+            }
         }
     };
 
@@ -331,6 +375,44 @@ pub async fn execute(
         agent,
         model,
     })
+}
+
+async fn lock_codex_auth<'a>(
+    database: &'a db::Db,
+    directory: &Path,
+    cancel: &CancellationToken,
+) -> Result<sqlx::Transaction<'a, sqlx::Postgres>, ReviewError> {
+    let mut transaction = database.begin().await?;
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(ReviewError::Cancelled),
+        result = sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("crocode:codex-auth:{}", directory.display()))
+            .execute(&mut *transaction) => { result?; }
+    }
+    Ok(transaction)
+}
+
+fn fallback_for_limit(
+    agent: Agent,
+    fallback: Option<Agent>,
+    stdout: &str,
+    stderr: &str,
+) -> Option<Agent> {
+    let fallback = fallback.filter(|next| *next != agent)?;
+    let limited = [stdout, stderr].iter().any(|text| {
+        let text = text.to_ascii_lowercase();
+        [
+            "you've hit your",
+            "usage limit",
+            "rate limit",
+            "rate_limit",
+            "insufficient_quota",
+        ]
+        .iter()
+        .any(|marker| text.contains(marker))
+    });
+    limited.then_some(fallback)
 }
 
 async fn publish(
@@ -615,6 +697,69 @@ mod tests {
             fingerprint: "f".into(),
             inline,
         }
+    }
+
+    #[sqlx::test(migrations = "../../migrations")]
+    #[ignore = "needs DATABASE_URL"]
+    async fn codex_auth_lock_serializes_shared_logins(pool: sqlx::PgPool) {
+        let path = Path::new("/private/codex-auth");
+        let cancel = CancellationToken::new();
+        let lock = lock_codex_auth(&pool, path, &cancel).await.unwrap();
+        let mut waiting = Box::pin(lock_codex_auth(&pool, path, &cancel));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut waiting)
+                .await
+                .is_err()
+        );
+        let other = lock_codex_auth(&pool, Path::new("/private/other-auth"), &cancel)
+            .await
+            .unwrap();
+        other.rollback().await.unwrap();
+        lock.rollback().await.unwrap();
+        let lock = waiting.await.unwrap();
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+        assert!(matches!(
+            lock_codex_auth(&pool, path, &cancelled).await,
+            Err(ReviewError::Cancelled)
+        ));
+        lock.rollback().await.unwrap();
+    }
+
+    #[test]
+    fn fallback_only_on_usage_limits() {
+        assert_eq!(
+            fallback_for_limit(
+                Agent::Claude,
+                Some(Agent::Codex),
+                "You've hit your 5-hour limit · resets 6pm (UTC)",
+                ""
+            ),
+            Some(Agent::Codex)
+        );
+        assert_eq!(
+            fallback_for_limit(
+                Agent::Claude,
+                Some(Agent::Codex),
+                "",
+                "HTTP 429: rate_limit_exceeded"
+            ),
+            Some(Agent::Codex)
+        );
+        for error in ["invalid JSON", "Not logged in", "connection refused"] {
+            assert_eq!(
+                fallback_for_limit(Agent::Claude, Some(Agent::Codex), error, ""),
+                None
+            );
+        }
+        assert_eq!(
+            fallback_for_limit(Agent::Codex, Some(Agent::Codex), "usage limit", ""),
+            None
+        );
+        assert_eq!(
+            fallback_for_limit(Agent::Claude, None, "usage limit", ""),
+            None
+        );
     }
 
     #[test]

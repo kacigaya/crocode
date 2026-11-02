@@ -158,6 +158,14 @@ fn docker_command(settings: &Settings, job: &Job<'_>) -> Command {
         job.output_dir.display(),
         CONTAINER_PATHS.2
     ));
+    if job.argv.first().is_some_and(|program| program == "codex")
+        && let Some(directory) = &settings.codex_auth_dir
+    {
+        c.arg(format!(
+            "--volume={}:/home/agent/.codex:rw",
+            directory.display()
+        ));
+    }
     for (key, value) in &job.env {
         c.arg(format!("--env={key}={value}"));
     }
@@ -169,6 +177,79 @@ fn docker_command(settings: &Settings, job: &Job<'_>) -> Command {
     c.arg(&settings.sandbox_image);
     c.args(&job.argv);
     c
+}
+
+/// Read only the dedicated Codex credential store, without exposing host config.
+/// Reading through Docker also works after Codex refreshes a file as uid 10001.
+pub async fn codex_auth_secrets(settings: &Settings) -> anyhow::Result<Vec<String>> {
+    let Some(directory) = &settings.codex_auth_dir else {
+        return Ok(Vec::new());
+    };
+    if settings.sandbox != SandboxMode::Docker {
+        bail!("CROCODE_CODEX_AUTH_DIR requires the Docker sandbox");
+    }
+    let name = format!("crocode-auth-{}", uuid::Uuid::new_v4().simple());
+    let mut command = Command::new("docker");
+    command.args([
+        "run",
+        "--name",
+        &name,
+        "--rm",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "--user=10001:10001",
+    ]);
+    if let Some(runtime) = &settings.sandbox_runtime {
+        command.args(["--runtime", runtime]);
+    }
+    command.arg(format!("--volume={}:/auth:ro", directory.display()));
+    command.args([&settings.sandbox_image, "cat", "/auth/auth.json"]);
+    command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = command.spawn().context("start Codex credential reader")?;
+    let stdout = child.stdout.take().context("credential reader stdout")?;
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let bytes = read_capped(stdout, 65537).await?;
+        let status = child.wait().await?;
+        Ok::<_, anyhow::Error>((status, bytes))
+    })
+    .await;
+    let (status, bytes) = match result {
+        Ok(Ok(output)) => output,
+        _ => {
+            stop(settings, &name, &mut child).await;
+            bail!("Codex credential read failed or timed out");
+        }
+    };
+    if !status.success() || bytes.len() > 65536 {
+        bail!("cannot read Codex credentials from CROCODE_CODEX_AUTH_DIR");
+    }
+    // Do not include a JSON parse error: it can contain credential bytes.
+    let value: serde_json::Value = serde_json::from_str(&bytes)
+        .map_err(|_| anyhow::anyhow!("invalid Codex credential store"))?;
+    Ok(auth_tokens(&value))
+}
+
+fn auth_tokens(value: &serde_json::Value) -> Vec<String> {
+    let mut tokens = Vec::new();
+    if let Some(object) = value.as_object() {
+        for (key, value) in object {
+            if matches!(
+                key.as_str(),
+                "access_token" | "refresh_token" | "id_token" | "OPENAI_API_KEY"
+            ) {
+                tokens.extend(value.as_str().map(str::to_owned));
+            } else if value.is_object() {
+                tokens.extend(auth_tokens(value));
+            }
+        }
+    }
+    tokens
 }
 
 /// Host mode for development. The process gets a clean environment.
@@ -224,6 +305,51 @@ async fn read_capped(mut reader: impl AsyncRead + Unpin, max: usize) -> Result<S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_auth_mount_is_not_shared_with_other_agents() {
+        let mut settings = Settings::for_test();
+        settings.codex_auth_dir = Some("/private/codex-auth".into());
+        for program in ["codex", "claude", "opencode"] {
+            let job = Job {
+                name: "test".into(),
+                repo_dir: Path::new("/repo"),
+                input_dir: Path::new("/input"),
+                output_dir: Path::new("/output"),
+                argv: vec![program.into()],
+                env: Vec::new(),
+                passthrough: Vec::new(),
+                stdin: String::new(),
+            };
+            let command = docker_command(&settings, &job);
+            let args: Vec<_> = command
+                .as_std()
+                .get_args()
+                .map(|s| s.to_string_lossy())
+                .collect();
+            assert_eq!(
+                args.iter().any(|s| s.contains("/private/codex-auth")),
+                program == "codex"
+            );
+            assert!(args.iter().any(|s| s == "--read-only"));
+            assert!(args.iter().any(|s| s == "--security-opt=no-new-privileges"));
+        }
+    }
+
+    #[test]
+    fn subscription_tokens_are_collected_for_redaction() {
+        let value = serde_json::json!({
+            "OPENAI_API_KEY": null,
+            "tokens": {"access_token": "access-secret", "refresh_token": "refresh-secret", "id_token": "id-secret", "account_id": "account"},
+            "last_refresh": "date",
+        });
+        let tokens = auth_tokens(&value);
+        assert_eq!(tokens.len(), 3);
+        for token in ["access-secret", "refresh-secret", "id-secret"] {
+            assert!(tokens.contains(&token.to_owned()));
+        }
+        assert!(!tokens.contains(&"account".to_owned()));
+    }
 
     #[tokio::test]
     async fn caps_output() {

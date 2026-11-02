@@ -28,6 +28,8 @@ pub struct Settings {
     pub github_web_url: String,
     pub agents: Vec<Agent>,
     pub default_agent: Agent,
+    pub fallback_agent: Option<Agent>,
+    pub codex_auth_dir: Option<PathBuf>,
     pub sandbox: SandboxMode,
     pub sandbox_image: String,
     pub sandbox_network: String,
@@ -71,6 +73,8 @@ impl Settings {
             github_web_url: "http://127.0.0.1:1".into(),
             agents: vec![Agent::Claude, Agent::Codex, Agent::OpenCode],
             default_agent: Agent::Claude,
+            fallback_agent: None,
+            codex_auth_dir: None,
             sandbox: SandboxMode::Docker,
             sandbox_image: "crocode-sandbox:test".into(),
             sandbox_network: "none".into(),
@@ -116,6 +120,19 @@ impl Settings {
         if !agents.contains(&default_agent) {
             bail!("CROCODE_DEFAULT_AGENT must be one of CROCODE_AGENTS");
         }
+        let fallback_agent = optional("CROCODE_FALLBACK_AGENT")
+            .map(|name| name.parse::<Agent>())
+            .transpose()?;
+        if fallback_agent.is_some_and(|agent| !agents.contains(&agent)) {
+            bail!("CROCODE_FALLBACK_AGENT must be one of CROCODE_AGENTS");
+        }
+        let codex_auth_dir = optional("CROCODE_CODEX_AUTH_DIR").map(PathBuf::from);
+        if codex_auth_dir
+            .as_ref()
+            .is_some_and(|path| !path.is_absolute())
+        {
+            bail!("CROCODE_CODEX_AUTH_DIR must be an absolute host path");
+        }
         let sandbox = match optional("CROCODE_SANDBOX").as_deref() {
             None | Some("docker") => SandboxMode::Docker,
             Some("none") => SandboxMode::None,
@@ -139,6 +156,8 @@ impl Settings {
                 .to_owned(),
             agents,
             default_agent,
+            fallback_agent,
+            codex_auth_dir,
             sandbox,
             sandbox_image: optional("CROCODE_SANDBOX_IMAGE")
                 .unwrap_or_else(|| "crocode-sandbox:latest".into()),
