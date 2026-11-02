@@ -337,7 +337,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
           <li>Choose a model from the list, or type a model name. Leave the model blank to use the agent default.</li>
           <li>Save the settings.</li>
         </ol>
-        <p>The model list shows the models that each agent CLI reports. The worker checks them at start and every 6 hours.</p>
+        <p>The model list shows the models that each agent reports. For Claude, it shows the aliases and the versioned models from the Anthropic Models API. The worker checks them at start and every 6 hours.</p>
         <p>The <strong>Overview</strong> tab shows open pull requests and the state of their newest review. It also shows review totals, reviews per day, and findings by severity for the last 30 days.</p>
         <p>Only the account owner or an active organization admin can change settings. The server checks this access again when you save. Repository config can override the installation’s agent and model.</p>
       </>,

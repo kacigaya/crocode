@@ -50,7 +50,11 @@ Agents that this server can run, and the models that each agent CLI reports.
 The worker detects models at start and every 6 hours. It runs each list
 command in the sandbox:
 
-- Claude Code: the aliases named in `claude --help`. Claude Code has no list command.
+- Claude Code: the aliases named in `claude --help`, then the active models from the
+  [Models API](https://docs.claude.com/en/api/models-list) with their versions and names.
+  Claude Code has no list command. An alias is named after the newest model of its line.
+  The Models API call uses `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` and respects `ANTHROPIC_BASE_URL`.
+  Without credentials, or with Bedrock or Vertex, the list holds the aliases only.
 - Codex: `codex debug models`, listed models only. Codex gets no credentials for this command.
 - OpenCode: `opencode models`. OpenCode gets the provider keys, so the list shows configured providers.
 

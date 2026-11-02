@@ -187,8 +187,8 @@ export function SettingsForm({
             </Autocomplete>
             <p id="model-hint" className="text-xs text-muted-foreground">
               {models.length > 0
-                ? `${models.length} ${models.length === 1 ? "model" : "models"} detected from the ${effective} CLI. You can also type another model name. Leave empty to use the agent default.`
-                : `No models detected from the ${effective} CLI yet. The worker checks at start and every 6 hours. Type a model name, or leave empty to use the agent default.`}
+                ? `${models.length} ${models.length === 1 ? "model" : "models"} detected for ${effective}. You can also type another model name. Leave empty to use the agent default.`
+                : `No models detected for ${effective} yet. The worker checks at start and every 6 hours. Type a model name, or leave empty to use the agent default.`}
             </p>
           </div>
         </fieldset>
