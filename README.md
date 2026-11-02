@@ -80,6 +80,9 @@ cd crocode
 cp .env.example .env && chmod 600 .env
 ```
 
+To let a coding agent do these steps, open the repository in Claude Code or Codex and ask it to set up CroCode.
+The `crocode-setup` skill in `.agents/skills/` guides the agent. It asks before `sudo` commands and never shows secrets.
+
 1. Set separate database setup and runtime passwords and your agent credentials in `.env`.
    Keep each password consistent with its connection URL.
    For Claude, use an API key or a subscription token from `claude setup-token`.

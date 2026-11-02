@@ -69,6 +69,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       content: <>
         <p>Use a Linux host with Docker Compose, a GitHub account, a public HTTPS address, and credentials for at least one <Link href="/docs/configuration/agents">agent</Link>. The images support ARM64 and AMD64.</p>
         <Note><p>The worker uses the Docker socket. This gives it effective control of the host. Use a dedicated host or Docker daemon for reviews.</p></Note>
+        <p>To let a coding agent do these steps, open the repository in Claude Code or Codex and ask it to set up CroCode. The <code>crocode-setup</code> skill in <code>.agents/skills/</code> guides the agent. It asks before <code>sudo</code> commands and never shows secrets.</p>
       </>,
     },
     {
