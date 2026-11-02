@@ -1,1 +1,5 @@
 web/** linguist-documentation
+*.js linguist-documentation linguist-detectable=false
+*.jsx linguist-documentation linguist-detectable=false
+*.mjs linguist-documentation linguist-detectable=false
+*.cjs linguist-documentation linguist-detectable=false
