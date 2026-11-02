@@ -35,6 +35,7 @@ impl Agent {
         match self {
             Self::Claude => &[
                 "ANTHROPIC_API_KEY",
+                "CLAUDE_CODE_OAUTH_TOKEN",
                 "ANTHROPIC_BASE_URL",
                 "CLAUDE_CODE_USE_BEDROCK",
                 "CLAUDE_CODE_USE_VERTEX",
@@ -88,11 +89,21 @@ pub const RESULT_FILE: &str = "result.json";
 /// including paths outside the repository and the loop-detection prompt.
 const OPENCODE_CONFIG: &str = r#"{"$schema":"https://opencode.ai/config.json","permission":{"*":"deny","read":"allow","glob":"allow","grep":"allow","external_directory":"deny","doom_loop":"deny"},"share":"disabled","autoupdate":false}"#;
 
+/// True when Claude must authenticate with a subscription token from
+/// `claude setup-token`. An API key takes precedence.
+pub fn claude_uses_subscription() -> bool {
+    let set = |name| std::env::var_os(name).is_some_and(|value| !value.is_empty());
+    set("CLAUDE_CODE_OAUTH_TOKEN") && !set("ANTHROPIC_API_KEY")
+}
+
 /// Returns argv and extra fixed environment for one agent run.
+///
+/// `subscription` applies to Claude only. See [`claude_uses_subscription`].
 pub fn command(
     agent: Agent,
     model: Option<&str>,
     paths: &Paths,
+    subscription: bool,
 ) -> (Vec<String>, Vec<(String, String)>) {
     let mut argv: Vec<String> = Vec::new();
     let mut env: Vec<(String, String)> = Vec::new();
@@ -102,7 +113,14 @@ pub fn command(
                 [
                     "claude",
                     "-p",
-                    "--bare",
+                    // `--bare` never reads OAuth credentials. `--safe-mode`
+                    // accepts them and still skips CLAUDE.md, hooks, plugins,
+                    // skills, and MCP servers from the repository.
+                    if subscription {
+                        "--safe-mode"
+                    } else {
+                        "--bare"
+                    },
                     // Confines file tools to the working directory and
                     // removes Bash and WebFetch.
                     "--restricted",
@@ -244,18 +262,24 @@ mod tests {
 
     #[test]
     fn commands_are_read_only() {
-        let (claude, _) = command(Agent::Claude, Some("sonnet"), &paths());
+        let (claude, _) = command(Agent::Claude, Some("sonnet"), &paths(), false);
         let joined = claude.join(" ");
+        assert!(joined.contains("--bare"));
         assert!(joined.contains("--tools Read,Grep,Glob"));
         assert!(joined.contains("--restricted"));
         assert!(joined.ends_with("--model sonnet"));
         assert!(!joined.contains("skip-permissions"));
 
-        let (codex, _) = command(Agent::Codex, None, &paths());
+        let (subscription, _) = command(Agent::Claude, None, &paths(), true);
+        assert!(subscription.iter().any(|arg| arg == "--safe-mode"));
+        assert!(!subscription.iter().any(|arg| arg == "--bare"));
+        assert!(subscription.iter().any(|arg| arg == "--restricted"));
+
+        let (codex, _) = command(Agent::Codex, None, &paths(), false);
         assert!(codex.windows(2).any(|w| w == ["--sandbox", "read-only"]));
         assert_eq!(codex.last().unwrap(), "-");
 
-        let (opencode, env) = command(Agent::OpenCode, None, &paths());
+        let (opencode, env) = command(Agent::OpenCode, None, &paths(), false);
         assert!(opencode.iter().any(|arg| arg == "--pure"));
         let config: Value = serde_json::from_str(&env[0].1).unwrap();
         assert_eq!(config["permission"]["*"], "deny");

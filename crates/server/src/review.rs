@@ -197,7 +197,12 @@ pub async fn execute(
     .context("write schema")?;
 
     let paths = sandbox::paths(settings, &work.path);
-    let (argv, env) = agents::command(agent, model.as_deref(), &paths);
+    let (argv, env) = agents::command(
+        agent,
+        model.as_deref(),
+        &paths,
+        agents::claude_uses_subscription(),
+    );
     let passthrough: Vec<String> = agent
         .env_names()
         .iter()

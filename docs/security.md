@@ -18,6 +18,10 @@ Maintainer instructions can focus the review. They cannot change the output form
 An ignored file can still be read because the sandbox receives the full head checkout.
 
 Claude uses `--bare`, `--restricted`, strict MCP config, and only Read, Grep, and Glob tools.
+With a subscription token and no API key, Claude uses `--safe-mode` instead of `--bare`.
+`--bare` does not read OAuth credentials.
+Safe mode skips repository CLAUDE.md files, hooks, plugins, skills, and MCP servers.
+A local test with a hostile CLAUDE.md and project hooks showed no hook run in safe mode.
 Codex uses `exec --sandbox read-only`, an ephemeral session, and ignores user config and rules.
 OpenCode denies all tools except read, glob, and grep.
 It also uses `--pure` and disables project config, Claude config, and external skill discovery.
