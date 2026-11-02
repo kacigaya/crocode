@@ -82,6 +82,9 @@ pub struct Paths {
     pub output: String,
 }
 
+pub const OSV_FILE: &str = "osv.mjs";
+pub const OSV_SERVER: &str = include_str!("osv.mjs");
+
 pub const SCHEMA_FILE: &str = "schema.json";
 pub const RESULT_FILE: &str = "result.json";
 
@@ -128,7 +131,7 @@ pub fn command(
                     "--tools",
                     "Read,Grep,Glob",
                     "--allowedTools",
-                    "Read,Grep,Glob",
+                    "Read,Grep,Glob,mcp__osv__query,mcp__osv__get_vulnerability",
                     "--permission-mode",
                     "dontAsk",
                     "--no-session-persistence",
@@ -139,6 +142,15 @@ pub fn command(
                 .map(String::from),
             );
             argv.push(output_schema().to_string());
+            // Safe mode ignores explicit MCP config in the pinned Claude CLI.
+            // Keep it enabled for subscription auth; never weaken startup controls.
+            argv.extend([
+                "--mcp-config".into(),
+                serde_json::json!({"mcpServers": {"osv": {
+                    "command": "node", "args": [format!("{}/{OSV_FILE}", paths.input)]
+                }}})
+                .to_string(),
+            ]);
             if let Some(model) = model {
                 argv.extend(["--model".into(), model.into()]);
             }
@@ -171,6 +183,15 @@ pub fn command(
             if let Some(model) = model {
                 argv.extend(["--model".into(), model.into()]);
             }
+            argv.extend([
+                "-c".into(),
+                "mcp_servers.osv.command=\"node\"".into(),
+                "-c".into(),
+                format!(
+                    "mcp_servers.osv.args={}",
+                    serde_json::json!([format!("{}/{OSV_FILE}", paths.input)])
+                ),
+            ]);
             argv.push("-".into());
         }
         Agent::OpenCode => {
@@ -179,7 +200,15 @@ pub fn command(
             if let Some(model) = model {
                 argv.extend(["--model".into(), model.into()]);
             }
-            env.push(("OPENCODE_CONFIG_CONTENT".into(), OPENCODE_CONFIG.into()));
+            let mut config: Value =
+                serde_json::from_str(OPENCODE_CONFIG).expect("fixed OpenCode config is valid JSON");
+            config["mcp"] = serde_json::json!({"osv": {
+                "type": "local", "command": ["node", &format!("{}/{OSV_FILE}", paths.input)],
+                "enabled": true,
+            }});
+            config["permission"]["osv_query"] = "allow".into();
+            config["permission"]["osv_get_vulnerability"] = "allow".into();
+            env.push(("OPENCODE_CONFIG_CONTENT".into(), config.to_string()));
             for name in [
                 "OPENCODE_DISABLE_PROJECT_CONFIG",
                 "OPENCODE_DISABLE_CLAUDE_CODE",
@@ -294,6 +323,37 @@ mod tests {
                     .any(|(key, value)| key == name && value == "true")
             );
         }
+    }
+
+    #[test]
+    fn agents_configure_only_the_trusted_osv_tools() {
+        for subscription in [false, true] {
+            let (argv, _) = command(Agent::Claude, None, &paths(), subscription);
+            let index = argv.iter().position(|arg| arg == "--mcp-config").unwrap();
+            let config: Value = serde_json::from_str(&argv[index + 1]).unwrap();
+            assert_eq!(config["mcpServers"]["osv"]["args"][0], "/input/osv.mjs");
+            assert_eq!(config["mcpServers"].as_object().unwrap().len(), 1);
+            assert!(argv.iter().any(|arg| arg.contains("mcp__osv__query")));
+            assert!(argv.iter().any(|arg| arg == "--strict-mcp-config"));
+        }
+        let (argv, _) = command(Agent::Codex, None, &paths(), false);
+        assert!(
+            argv.iter()
+                .any(|arg| arg == r#"mcp_servers.osv.command="node""#)
+        );
+        assert!(
+            argv.iter()
+                .any(|arg| arg == r#"mcp_servers.osv.args=["/input/osv.mjs"]"#)
+        );
+        let (_, env) = command(Agent::OpenCode, None, &paths(), false);
+        let config: Value = serde_json::from_str(&env[0].1).unwrap();
+        assert_eq!(
+            config["mcp"]["osv"]["command"],
+            serde_json::json!(["node", "/input/osv.mjs"])
+        );
+        assert_eq!(config["permission"]["osv_query"], "allow");
+        assert_eq!(config["permission"]["osv_get_vulnerability"], "allow");
+        assert_eq!(config["permission"]["*"], "deny");
     }
 
     #[test]

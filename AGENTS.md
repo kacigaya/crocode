@@ -11,6 +11,7 @@
 ## Commands
 
 - Rust checks: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all`.
+- OSV tool tests: `node --test crates/server/src/osv.test.mjs` with Node.js 24 or later. The sandbox image includes Node.js 24.
 - Database tests: `DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/postgres cargo test --all -- --include-ignored`. SQLx needs a user that can create databases. Plain tests skip these 11 tests.
 - Compose database: `sudo docker compose up -d postgres` after `.env` setup. From a host test process, use a reachable Postgres URL; Compose does not publish its database port.
 - Web checks (in `web/`): `bun install --frozen-lockfile`, `bun run lint`, `bun run typecheck`, `bun test`, `bun run build`.

@@ -14,7 +14,7 @@ use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::agents::{self, Agent, RESULT_FILE, SCHEMA_FILE, valid_model};
+use crate::agents::{self, Agent, OSV_FILE, OSV_SERVER, RESULT_FILE, SCHEMA_FILE, valid_model};
 use crate::github::{NewComment, NewReview, PullFile, RepoClient, status_code};
 use crate::sandbox::{self, RunError};
 use crate::settings::FallbackAgent;
@@ -198,6 +198,10 @@ pub async fn execute(
     )
     .await
     .context("write schema")?;
+
+    tokio::fs::write(input_dir.join(OSV_FILE), OSV_SERVER)
+        .await
+        .context("write OSV tools")?;
 
     let paths = sandbox::paths(settings, &work.path);
     let mut agent = agent;

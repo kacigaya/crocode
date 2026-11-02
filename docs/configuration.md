@@ -122,6 +122,35 @@ It uses `--pure` to block external plugins.
 The sandbox image disables Claude auto-updates.
 Rebuild the image to update pinned CLIs.
 
+## OSV vulnerability tools
+
+Codex, OpenCode, and Claude with an API key receive two OSV tools through a worker-supplied MCP server:
+
+- `query`: look up an exact public package version and follow result pages.
+- `get_vulnerability`: fetch an advisory by OSV ID, including CVE aliases and affected ranges.
+
+Claude subscription runs keep `--safe-mode`. In the pinned Claude CLI, this mode
+ignores even explicitly supplied MCP servers. OSV tools are unavailable for those
+runs. Use API-key authentication for Claude OSV lookups, or use Codex or OpenCode.
+Keep safe mode enabled until a CLI version supports trusted MCP tools in that mode.
+
+The [OSV API](https://google.github.io/osv.dev/api/) needs no API key.
+Do not set `OSV_API_KEY` or add OSV credentials to `CROCODE_AGENT_ENV`.
+The worker writes the tool server into the read-only job input directory.
+The sandbox image already includes Node.js. Host mode needs Node.js 24 or later on `PATH`.
+Rebuild the worker image to install these tools. No sandbox image change is needed.
+
+The tools contact only `https://api.osv.dev` and reject redirects.
+Each call has a 20-second timeout and a 2 MiB response limit.
+Failed or incomplete lookups must appear as a gap in the review summary.
+Agents choose when to query OSV. This is not a full dependency scan.
+The prompt permits only public package names and exact versions in queries.
+OSV receives those values. Do not use these tools for private package names.
+
+Sandbox networking must permit HTTPS to `api.osv.dev`.
+`CROCODE_SANDBOX_NETWORK=none` prevents OSV lookups.
+The tools do not give agents shell, write, or arbitrary URL access.
+
 ## Compose environment
 
 | Variable | Example or default | Meaning |

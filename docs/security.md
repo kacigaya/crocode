@@ -17,18 +17,28 @@ A PR cannot change its own review policy through its head copy of that file.
 Maintainer instructions can focus the review. They cannot change the output format or safety rules.
 An ignored file can still be read because the sandbox receives the full head checkout.
 
-Claude uses `--bare`, `--restricted`, strict MCP config, and only Read, Grep, and Glob tools.
+Claude uses `--bare`, `--restricted`, strict MCP config, and only Read, Grep, Glob, and the two worker-supplied OSV lookup tools.
 With a subscription token and no API key, Claude uses `--safe-mode` instead of `--bare`.
 `--bare` does not read OAuth credentials.
 Safe mode skips repository CLAUDE.md files, hooks, plugins, skills, and MCP servers.
 A local test with a hostile CLAUDE.md and project hooks showed no hook run in safe mode.
 Codex uses `exec --sandbox read-only`, an ephemeral session, and ignores user config and rules.
-OpenCode denies all tools except read, glob, and grep.
+OpenCode denies all tools except read, glob, grep, and the two worker-supplied OSV lookup tools.
 It also uses `--pure` and disables project config, Claude config, and external skill discovery.
 These controls stop PR files from supplying OpenCode plugins or startup config.
 A local test showed that a project plugin ran before model access with the old command.
 The same plugin did not run with the new controls.
 See the [OpenCode CLI controls](https://opencode.ai/docs/cli/#environment-variables).
+
+The worker supplies a fixed OSV MCP server to the agents. Repository MCP servers stay disabled.
+Claude subscription safe mode also disables this trusted server in the pinned CLI.
+CroCode keeps safe mode intact. Those runs cannot use OSV lookup tools.
+The OSV tools query exact package versions and fetch advisory records from `api.osv.dev` only.
+They reject redirects and caller-supplied URLs. No API key is needed.
+Each call has a 20-second timeout and a 2 MiB response limit.
+Advisory text is untrusted. The prompt forbids sending private names, code, or secrets to OSV.
+These prompt rules do not prove that a model will keep private data out of query fields.
+The tools do not provide a complete dependency scan or grant general web access.
 
 Read-only files do not stop a process from executing code or sending network requests.
 A prompt instruction is not an OS security boundary.
