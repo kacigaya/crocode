@@ -32,7 +32,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       content: <>
         <p>CroCode reviews GitHub pull requests with Claude Code, Codex, or OpenCode. You run the API, workers, database, and dashboard on your own servers.</p>
         <p>Each agent gets a read-only checkout. CroCode checks the findings against the diff, removes duplicates, and posts inline comments with severity levels and suggested fixes.</p>
-        <Note><p>CroCode is in development. No release is published yet. Model providers receive code and review context. Read the <Link href="/docs/security">security guide</Link> before you review untrusted code.</p></Note>
+        <Note><p>CroCode is in development. See the <a href="https://github.com/kacigaya/crocode/releases">releases</a> for available versions. Model providers receive code and review context. Read the <Link href="/docs/security">security guide</Link> before you review untrusted code.</p></Note>
       </>,
     },
     {
