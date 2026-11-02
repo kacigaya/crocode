@@ -16,6 +16,32 @@ pub enum SandboxMode {
     None,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FallbackAgent {
+    Auto,
+    Fixed(Agent),
+}
+
+fn parse_fallback(value: Option<&str>, enabled: &[Agent]) -> Result<Option<FallbackAgent>> {
+    let fallback = match value.map(str::trim).filter(|v| !v.is_empty()) {
+        None => return Ok(None),
+        Some("auto") => {
+            if !enabled.contains(&Agent::Claude) || !enabled.contains(&Agent::Codex) {
+                bail!("CROCODE_FALLBACK_AGENT=auto requires claude and codex in CROCODE_AGENTS");
+            }
+            FallbackAgent::Auto
+        }
+        Some(name) => {
+            let agent = name.parse::<Agent>()?;
+            if !enabled.contains(&agent) {
+                bail!("CROCODE_FALLBACK_AGENT must be one of CROCODE_AGENTS");
+            }
+            FallbackAgent::Fixed(agent)
+        }
+    };
+    Ok(Some(fallback))
+}
+
 #[derive(Clone)]
 pub struct Settings {
     pub database_url: String,
@@ -28,7 +54,7 @@ pub struct Settings {
     pub github_web_url: String,
     pub agents: Vec<Agent>,
     pub default_agent: Agent,
-    pub fallback_agent: Option<Agent>,
+    pub fallback_agent: Option<FallbackAgent>,
     pub codex_auth_dir: Option<PathBuf>,
     pub sandbox: SandboxMode,
     pub sandbox_image: String,
@@ -120,12 +146,8 @@ impl Settings {
         if !agents.contains(&default_agent) {
             bail!("CROCODE_DEFAULT_AGENT must be one of CROCODE_AGENTS");
         }
-        let fallback_agent = optional("CROCODE_FALLBACK_AGENT")
-            .map(|name| name.parse::<Agent>())
-            .transpose()?;
-        if fallback_agent.is_some_and(|agent| !agents.contains(&agent)) {
-            bail!("CROCODE_FALLBACK_AGENT must be one of CROCODE_AGENTS");
-        }
+        let fallback_agent =
+            parse_fallback(optional("CROCODE_FALLBACK_AGENT").as_deref(), &agents)?;
         let codex_auth_dir = optional("CROCODE_CODEX_AUTH_DIR").map(PathBuf::from);
         if codex_auth_dir
             .as_ref()
@@ -248,6 +270,42 @@ fn number(name: &str, default: u64) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_fallback_modes() {
+        let enabled = [Agent::Claude, Agent::Codex, Agent::OpenCode];
+        for value in [None, Some(""), Some("  ")] {
+            assert_eq!(parse_fallback(value, &enabled).unwrap(), None);
+        }
+        assert_eq!(
+            parse_fallback(Some(" auto "), &enabled).unwrap(),
+            Some(FallbackAgent::Auto)
+        );
+        for (name, agent) in [
+            ("claude", Agent::Claude),
+            ("codex", Agent::Codex),
+            ("opencode", Agent::OpenCode),
+        ] {
+            assert_eq!(
+                parse_fallback(Some(name), &enabled).unwrap(),
+                Some(FallbackAgent::Fixed(agent))
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unavailable_fallback_agents() {
+        for enabled in [
+            &[][..],
+            &[Agent::Claude][..],
+            &[Agent::Codex][..],
+            &[Agent::OpenCode][..],
+        ] {
+            assert!(parse_fallback(Some("auto"), enabled).is_err());
+        }
+        assert!(parse_fallback(Some("codex"), &[Agent::Claude]).is_err());
+        assert!(parse_fallback(Some("unknown"), &[Agent::Claude, Agent::Codex]).is_err());
+    }
 
     #[test]
     fn reads_stored_app_and_ignores_extra_fields() {

@@ -17,6 +17,7 @@ use tracing::{info, warn};
 use crate::agents::{self, Agent, RESULT_FILE, SCHEMA_FILE, valid_model};
 use crate::github::{NewComment, NewReview, PullFile, RepoClient, status_code};
 use crate::sandbox::{self, RunError};
+use crate::settings::FallbackAgent;
 use crate::{AppState, db};
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(300);
@@ -276,10 +277,13 @@ pub async fn execute(
             Ok(review) => break review,
             Err(err) => {
                 let stderr = redact(&output.stderr, &secrets);
-                if !fallback_used
-                    && let Some(next) =
-                        fallback_for_limit(agent, settings.fallback_agent, &stdout, &stderr)
-                {
+                if let Some(next) = fallback_for_limit(
+                    agent,
+                    settings.fallback_agent,
+                    fallback_used,
+                    &stdout,
+                    &stderr,
+                ) {
                     warn!(review = %job.id, agent = agent.name(), fallback = next.name(),
                         "agent usage limit reached; starting fallback");
                     agent = next;
@@ -395,11 +399,23 @@ async fn lock_codex_auth<'a>(
 
 fn fallback_for_limit(
     agent: Agent,
-    fallback: Option<Agent>,
+    fallback: Option<FallbackAgent>,
+    fallback_used: bool,
     stdout: &str,
     stderr: &str,
 ) -> Option<Agent> {
-    let fallback = fallback.filter(|next| *next != agent)?;
+    if fallback_used {
+        return None;
+    }
+    let fallback = match fallback? {
+        FallbackAgent::Fixed(next) if next != agent => next,
+        FallbackAgent::Auto => match agent {
+            Agent::Claude => Agent::Codex,
+            Agent::Codex => Agent::Claude,
+            Agent::OpenCode => return None,
+        },
+        FallbackAgent::Fixed(_) => return None,
+    };
     let limited = [stdout, stderr].iter().any(|text| {
         let text = text.to_ascii_lowercase();
         [
@@ -727,11 +743,13 @@ mod tests {
     }
 
     #[test]
-    fn fallback_only_on_usage_limits() {
+    fn fixed_fallback_only_on_usage_limits() {
+        let fixed = Some(FallbackAgent::Fixed(Agent::Codex));
         assert_eq!(
             fallback_for_limit(
                 Agent::Claude,
-                Some(Agent::Codex),
+                fixed,
+                false,
                 "You've hit your 5-hour limit · resets 6pm (UTC)",
                 ""
             ),
@@ -740,7 +758,8 @@ mod tests {
         assert_eq!(
             fallback_for_limit(
                 Agent::Claude,
-                Some(Agent::Codex),
+                fixed,
+                false,
                 "",
                 "HTTP 429: rate_limit_exceeded"
             ),
@@ -748,16 +767,42 @@ mod tests {
         );
         for error in ["invalid JSON", "Not logged in", "connection refused"] {
             assert_eq!(
-                fallback_for_limit(Agent::Claude, Some(Agent::Codex), error, ""),
+                fallback_for_limit(Agent::Claude, fixed, false, error, ""),
                 None
             );
         }
         assert_eq!(
-            fallback_for_limit(Agent::Codex, Some(Agent::Codex), "usage limit", ""),
+            fallback_for_limit(Agent::Codex, fixed, false, "usage limit", ""),
             None
         );
         assert_eq!(
-            fallback_for_limit(Agent::Claude, None, "usage limit", ""),
+            fallback_for_limit(Agent::Claude, None, false, "usage limit", ""),
+            None
+        );
+        assert_eq!(
+            fallback_for_limit(Agent::Claude, fixed, true, "usage limit", ""),
+            None
+        );
+    }
+
+    #[test]
+    fn automatic_fallback_works_both_ways_without_loops() {
+        let auto = Some(FallbackAgent::Auto);
+        for (primary, fallback) in [(Agent::Claude, Agent::Codex), (Agent::Codex, Agent::Claude)] {
+            assert_eq!(
+                fallback_for_limit(primary, auto, false, "usage limit reached", ""),
+                Some(fallback)
+            );
+            assert_eq!(
+                fallback_for_limit(fallback, auto, true, "usage limit reached", ""),
+                None
+            );
+            for error in ["invalid JSON", "Not logged in", "connection refused", ""] {
+                assert_eq!(fallback_for_limit(primary, auto, false, error, ""), None);
+            }
+        }
+        assert_eq!(
+            fallback_for_limit(Agent::OpenCode, auto, false, "usage limit", ""),
             None
         );
     }

@@ -31,7 +31,7 @@ If you add a variable to the `api` service, add it to `docker-compose.yml` too.
 | `GITHUB_WEB_URL` | `https://github.com` | Git host used to fetch repository PR heads. Trailing slashes are removed. |
 | `CROCODE_AGENTS` | `claude,codex,opencode` | Comma-separated enabled agents. |
 | `CROCODE_DEFAULT_AGENT` | First enabled agent | Must appear in `CROCODE_AGENTS`. |
-| `CROCODE_FALLBACK_AGENT` | Unset | Optional enabled agent to try once when the selected agent reports a usage or rate limit. |
+| `CROCODE_FALLBACK_AGENT` | Unset | Enabled agent name, or `auto` for Claude/Codex fallback in both directions. Tried once per attempt on a usage or rate limit. |
 | `CROCODE_CODEX_AUTH_DIR` | Unset | Dedicated absolute host directory with a Codex ChatGPT login cache. Docker sandbox only. Mounted read-write only for Codex. |
 | `CROCODE_SANDBOX` | `docker` | `docker` or `none`. Use `none` only for trusted local development. |
 | `CROCODE_SANDBOX_IMAGE` | `crocode-sandbox:latest` | Image on the worker's Docker daemon. Build it before you start reviews. |
@@ -57,10 +57,17 @@ See [the container checks](../docker/README.md#local-verification) before you en
 
 ## Agent fallback
 
-Set `CROCODE_FALLBACK_AGENT=codex` to try Codex when the selected agent reports
-a usage or rate limit instead of a valid review. Also enable `codex` in
-`CROCODE_AGENTS`. The fallback uses its default model. It does not inherit the
-first agent's model name. Each review attempt can use the fallback once.
+Set `CROCODE_FALLBACK_AGENT=auto` to switch from Claude to Codex, or from
+Codex to Claude, when the selected agent reports a usage or rate limit
+instead of a valid review. Both agents must appear in `CROCODE_AGENTS`.
+Automatic mode does not choose a fallback for OpenCode.
+
+An explicit name, such as `CROCODE_FALLBACK_AGENT=codex`, keeps fixed-agent
+fallback. Empty or unset disables fallback.
+
+The fallback uses its default model. It does not inherit the first agent's
+model name. Each review attempt can switch agents once. If both agents hit
+their limits, the attempt ends and the normal retry policy applies.
 Other errors keep the normal retry behavior. Cancellation stops the review.
 The result records the agent and model that produced the review.
 
