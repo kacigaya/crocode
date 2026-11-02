@@ -11,7 +11,7 @@
 ## Commands
 
 - Rust checks: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all`.
-- Database tests: `DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/postgres cargo test --all -- --include-ignored`. SQLx needs a user that can create databases. Plain tests skip these 10 tests.
+- Database tests: `DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/postgres cargo test --all -- --include-ignored`. SQLx needs a user that can create databases. Plain tests skip these 11 tests.
 - Compose database: `sudo docker compose up -d postgres` after `.env` setup. From a host test process, use a reachable Postgres URL; Compose does not publish its database port.
 - Web checks (in `web/`): `bun install --frozen-lockfile`, `bun run lint`, `bun run typecheck`, `bun test`, `bun run build`.
 - Docs checks (in `web/`): `bun run build:docs`, `bun run scripts/check-docs-export.ts`. GitHub Pages publishes `web/site/out/` at `https://kacigaya.github.io/crocode/` through `.github/workflows/pages.yml`. The static app uses base path `/crocode` and excludes dashboard and auth routes.
@@ -27,6 +27,7 @@
 - Package manager and test runner for `web/` is Bun (`~/.bun/bin/bun`).
 - Existing test Postgres 17: `postgres://postgres:postgres@127.0.0.1:55432/postgres`. Do not stop services started by others.
 - The host has no AMD64 emulator. CI uses native AMD64 and ARM64 runners.
+- gVisor `runsc` 20261026.0 is installed as an optional Docker runtime. Default runtime stays `runc`. The patched system Bubblewrap in `docker/sandbox` fixes the loopback setup failure. Codex read-only filesystem and blocked-network probes pass under runsc.
 - Codex 0.166.0 bubblewrap namespaces fail under the default Docker restrictions here. The example enables Claude and OpenCode. See `docker/README.md`.
 - Worker image uid/gid: `10000:10000`. Sandbox uid/gid: `10001:10001`.
 - Worker Docker socket access needs `DOCKER_GID` set to the socket group. `CROCODE_WORK_DIR` must be the same absolute host and worker bind path.

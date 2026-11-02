@@ -31,6 +31,8 @@ If you add a variable to the `api` service, add it to `docker-compose.yml` too.
 | `GITHUB_WEB_URL` | `https://github.com` | Git host used to fetch repository PR heads. Trailing slashes are removed. |
 | `CROCODE_AGENTS` | `claude,codex,opencode` | Comma-separated enabled agents. |
 | `CROCODE_DEFAULT_AGENT` | First enabled agent | Must appear in `CROCODE_AGENTS`. |
+| `CROCODE_FALLBACK_AGENT` | Unset | Optional enabled agent to try once when the selected agent reports a usage or rate limit. |
+| `CROCODE_CODEX_AUTH_DIR` | Unset | Dedicated absolute host directory with a Codex ChatGPT login cache. Docker sandbox only. Mounted read-write only for Codex. |
 | `CROCODE_SANDBOX` | `docker` | `docker` or `none`. Use `none` only for trusted local development. |
 | `CROCODE_SANDBOX_IMAGE` | `crocode-sandbox:latest` | Image on the worker's Docker daemon. Build it before you start reviews. |
 | `CROCODE_SANDBOX_NETWORK` | `bridge` | Docker network for agent containers. The model client needs provider access. |
@@ -53,6 +55,18 @@ The `.env.example` enables `claude,opencode` because the local Docker host block
 The code default still enables all three agents.
 See [the container checks](../docker/README.md#local-verification) before you enable Codex.
 
+## Agent fallback
+
+Set `CROCODE_FALLBACK_AGENT=codex` to try Codex when the selected agent reports
+a usage or rate limit instead of a valid review. Also enable `codex` in
+`CROCODE_AGENTS`. The fallback uses its default model. It does not inherit the
+first agent's model name. Each review attempt can use the fallback once.
+Other errors keep the normal retry behavior. Cancellation stops the review.
+The result records the agent and model that produced the review.
+
+Fallback does not fix missing credentials or an incompatible sandbox runtime.
+Keep the fallback unset until its authentication and sandbox probes pass.
+
 ## Provider credentials
 
 The worker passes only the selected agent's listed variables and `CROCODE_AGENT_ENV` to the agent.
@@ -71,6 +85,24 @@ To use a Claude subscription instead of an API key:
 2. Set `CLAUDE_CODE_OAUTH_TOKEN` to the token. Leave `ANTHROPIC_API_KEY` empty.
 
 An API key takes precedence. Reviews then count against the subscription usage limits.
+
+### Codex with a ChatGPT subscription
+
+Use a separate Codex login for each worker. Do not mount your normal Codex home:
+it can contain configuration, plugins, and unrelated session data.
+
+1. Create a dedicated directory on the Docker host. Give uid/gid `10001:10001` access. Set its mode to `0700`.
+2. Mount that directory at `/home/agent/.codex` in a temporary sandbox-image container. Run `codex login --device-auth` as uid/gid `10001:10001` and complete the login.
+3. Set `CROCODE_CODEX_AUTH_DIR` to the absolute host directory. Leave `CODEX_API_KEY` empty to use the subscription.
+4. Reserve that directory for CroCode. Workers that share it must use the same database and identical host path. Do not use that login from other tools.
+5. Verify the Codex read-only sandbox before enabling fallback. See [container checks](../docker/README.md#local-verification).
+
+Codex can update its login cache when tokens refresh. Only Codex containers
+receive this directory. A database advisory lock serializes Codex runs that
+use the same directory. The worker reads the old and refreshed tokens through
+a separate container and redacts them from stored agent output. The API does
+not mount the directory. No GitHub credentials enter the agent sandbox.
+The login remains subject to your ChatGPT plan limits.
 
 Never add GitHub tokens, app keys, database URLs, OAuth secrets, or session secrets to `CROCODE_AGENT_ENV`.
 The agent must be able to use its model key. A read-only filesystem does not hide environment variables from it.
