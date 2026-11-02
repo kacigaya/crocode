@@ -74,6 +74,7 @@ export function buildManifest(origin: string, name: string) {
     default_permissions: {
       contents: "read",
       pull_requests: "write",
+      vulnerability_alerts: "read",
       metadata: "read",
       members: "read",
     },

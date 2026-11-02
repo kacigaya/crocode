@@ -79,6 +79,7 @@ export default async function InstallationLayout({
         label="Installation"
         links={[
           { href: base, label: "Overview" },
+          { href: `${base}/vulnerabilities`, label: "Vulnerabilities" },
           { href: `${base}/settings`, label: "Settings" },
         ]}
       />

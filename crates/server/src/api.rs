@@ -36,6 +36,7 @@ pub fn router() -> Router<AppState> {
         .route("/installations/{id}/reviews", get(list_reviews))
         .route("/installations/{id}/stats", get(installation_stats))
         .route("/installations/{id}/pulls", get(open_pulls))
+        .route("/installations/{id}/vulnerabilities", get(vulnerabilities))
         .route("/reviews/{id}", get(get_review))
         .route("/reviews/{id}/pull", get(review_pull))
 }
@@ -544,4 +545,38 @@ async fn get_review(
         findings,
         files,
     }))
+}
+
+#[derive(Deserialize)]
+struct VulnerabilityQuery {
+    #[serde(default = "first_page")]
+    page: u32,
+}
+
+fn first_page() -> u32 {
+    1
+}
+
+async fn vulnerabilities(
+    State(state): State<AppState>,
+    access: Access,
+    token: UserToken,
+    Path(id): Path<i64>,
+    Query(query): Query<VulnerabilityQuery>,
+) -> ApiResult<crate::vulnerabilities::Report> {
+    access.require(id)?;
+    if query.page == 0 || query.page > 1_000_000 {
+        return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid page"));
+    }
+    let client = state.github.user_client(&token.0).map_err(github_error)?;
+    let report = crate::vulnerabilities::list(
+        &client,
+        id,
+        query.page,
+        &state.vulnerability_checks,
+        token.key(),
+    )
+    .await
+    .map_err(github_error)?;
+    Ok(Json(report))
 }

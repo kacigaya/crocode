@@ -38,6 +38,7 @@ let apiStatus = 200;
 let canAdmin = true;
 let empty = false;
 let pullsFail = false;
+let vulnerabilitiesFail = false;
 const calls: string[] = [];
 const patches: unknown[] = [];
 const mock = Bun.serve({
@@ -71,6 +72,27 @@ const mock = Bun.serve({
       );
     if (url.pathname === "/api/v1/installations/123")
       return Response.json({ ...installation, can_admin: canAdmin });
+    if (url.pathname === "/api/v1/installations/123/vulnerabilities") {
+      if (vulnerabilitiesFail) return Response.json({ error: "GitHub" }, { status: 502 });
+      return Response.json({
+        total_repositories: 6, next_page: url.searchParams.get("page") === "2" ? null : 2,
+        repositories: [
+          { repo_full_name: "acme/api", coverage: "readable", checked_at: "2026-11-02T10:00:00Z", last_success_at: "2026-11-02T10:00:00Z", alerts: [{
+            number: 1,
+            dependency: { package: { ecosystem: "npm", name: "example" }, manifest_path: "bun.lock", scope: "runtime" },
+            security_advisory: { ghsa_id: "GHSA-example", cve_id: "CVE-2026-1234", summary: "<script>untrusted-advisory</script>" },
+            security_vulnerability: { severity: "critical", vulnerable_version_range: "< 2", first_patched_version: { identifier: "2.0.0" } },
+          }, {
+            number: 2,
+            dependency: { package: { ecosystem: "npm", name: "other" }, manifest_path: "bun.lock", scope: null },
+            security_advisory: { ghsa_id: "GHSA-without-cve", cve_id: null, summary: "No CVE assigned" },
+            security_vulnerability: { severity: "low", vulnerable_version_range: "< 3", first_patched_version: null },
+          }] },
+          { repo_full_name: "acme/denied", coverage: "access_denied", checked_at: "2026-11-02T10:00:00Z", last_success_at: null, alerts: null },
+          { repo_full_name: "acme/empty", coverage: "readable", checked_at: "2026-11-02T10:00:00Z", last_success_at: "2026-11-02T09:00:00Z", alerts: [] },
+        ],
+      });
+    }
     if (url.pathname === "/api/v1/installations/123/stats")
       return Response.json({
         days: 30,
@@ -375,6 +397,41 @@ try {
   assert.equal(degraded.status, 200);
   assert.match(await degraded.text(), /Cannot load open pull requests/);
   pullsFail = false;
+  console.log("Checking vulnerabilities");
+  response = await get("/installations/123/vulnerabilities");
+  const vulnerabilities = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(vulnerabilities, /CVE-2026-1234/);
+  assert.match(vulnerabilities, /GHSA-without-cve/);
+  assert.match(vulnerabilities, /2.0.0/);
+  assert.match(vulnerabilities, /Not supplied/);
+  assert.match(vulnerabilities, /Some repositories could not be checked/);
+  assert.match(vulnerabilities, /No open Dependabot alerts reported/);
+  assert.match(vulnerabilities, /Next repositories/);
+  assert.ok(vulnerabilities.includes("&lt;script&gt;untrusted-advisory&lt;/script&gt;"));
+  assert.ok(!vulnerabilities.includes("<script>untrusted-advisory</script>"));
+  assert.ok(!vulnerabilities.includes(token));
+  assert.match(vulnerabilities, /Security coverage/);
+  assert.match(vulnerabilities, /Access denied/);
+  assert.match(vulnerabilities, /No successful read recorded/);
+  const filtered = await (await get("/installations/123/vulnerabilities?severity=critical&scope=runtime&fix=available")).text();
+  assert.match(filtered, /CVE-2026-1234/);
+  assert.ok(!filtered.includes("GHSA-without-cve"));
+  assert.match(filtered, /1 matching alert from/);
+  assert.match(filtered, /acme\/denied/); // Coverage stays visible while filtering.
+  assert.match(filtered, /page=2&amp;severity=critical&amp;scope=runtime&amp;fix=available/);
+  const noMatches = await (await get("/installations/123/vulnerabilities?q=not-a-match")).text();
+  assert.match(noMatches, /No alerts match these filters on this repository page/);
+  assert.match(noMatches, /acme\/denied/);
+  const lastRepoPage = await (await get("/installations/123/vulnerabilities?page=2")).text();
+  assert.match(lastRepoPage, /Previous repositories/);
+  assert.ok(!lastRepoPage.includes("Next repositories"));
+  const invalidPage = await (await get("/installations/123/vulnerabilities?page=0")).text();
+  assert.match(invalidPage, /Page not found/);
+  assert.ok(!calls.includes("/api/v1/installations/123/vulnerabilities?page=0"));
+  vulnerabilitiesFail = true;
+  assert.match(await (await get("/installations/123/vulnerabilities")).text(), /Cannot load vulnerabilities/);
+  vulnerabilitiesFail = false;
   console.log("Checking settings");
   response = await get("/installations/123/settings");
   const settings = await response.text();
@@ -567,7 +624,7 @@ try {
       `Sign-out clears ${name}`,
     );
   console.log(
-    "PASS: standalone runtime; public docs, Better Auth GitHub flow, landing, installations, overview, open pull requests and GitHub failure, settings and models, admin guard, pagination, review escaping, empty/404/401, expired token, disabled token endpoints, sign-in and sign-out actions.",
+    "PASS: standalone runtime; public docs, Better Auth GitHub flow, landing, installations, overview, open pull requests and GitHub failure, vulnerabilities and repository pages, settings and models, admin guard, pagination, review escaping, empty/404/401, expired token, disabled token endpoints, sign-in and sign-out actions.",
   );
 } catch (error) {
   console.error(output, calls);

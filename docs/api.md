@@ -241,3 +241,75 @@ Live pull request details from GitHub, read with the user token.
 
 `state` is `open`, `closed`, or `merged`. The API returns `404` when GitHub does
 not show the pull request to the user, and `502` for other GitHub failures.
+
+### `GET /api/v1/installations/{id}/vulnerabilities`
+
+Live open Dependabot alerts for repositories in this installation that the signed-in user can access.
+Requires the GitHub App's read-only **Dependabot alerts** repository permission (`vulnerability_alerts`).
+The user must also have access to the repository's security alerts.
+
+`page` defaults to `1`. Each page reads five repositories. Follow `next_page` until it is null.
+Each repository includes all its open alerts, including advisories without a CVE ID.
+Alert requests run concurrently with a 12-second timeout per repository.
+A failed or timed-out repository has `alerts: null`. This does not mean it has no vulnerabilities.
+A failed repository-list request returns `502`. No alert data or user token is stored.
+
+```json
+{
+  "total_repositories": 1,
+  "next_page": null,
+  "repositories": [{
+    "repo_full_name": "acme/api",
+    "coverage": "readable",
+    "checked_at": "2026-11-02T10:00:00Z",
+    "last_success_at": "2026-11-02T10:00:00Z",
+    "alerts": [{
+      "number": 1,
+      "dependency": {
+        "package": { "ecosystem": "npm", "name": "example" },
+        "manifest_path": "package-lock.json",
+        "scope": "runtime"
+      },
+      "security_advisory": {
+        "ghsa_id": "GHSA-example",
+        "cve_id": null,
+        "summary": "Advisory summary"
+      },
+      "security_vulnerability": {
+        "severity": "high",
+        "vulnerable_version_range": "< 2.0.0",
+        "first_patched_version": { "identifier": "2.0.0" }
+      }
+    }]
+  }]
+}
+```
+
+This is GitHub's alert inventory for the default branch, not a full code or dependency scan.
+Fixed and dismissed alerts are excluded. An empty response does not prove that a repository is safe.
+
+#### Coverage fields
+
+Each repository has a `coverage` value:
+
+| Value | Meaning |
+| --- | --- |
+| `readable` | All open alert pages were read. `alerts` is an array. |
+| `access_denied` | GitHub returned 401 or 403 without rate-limit headers. Check App permissions and the user's security access. |
+| `unavailable` | GitHub returned 404. Access, disabled alerts, or a removed repository can cause this. |
+| `rate_limited` | GitHub returned 429, or 403 with rate-limit headers. |
+| `timed_out` | The repository alert read exceeded 12 seconds. |
+| `failed` | A network, server, or response error prevented the read. |
+
+All failure states have `alerts: null`. A failed read never returns a partial alert list.
+`checked_at` is the completion time of the latest attempt.
+`last_success_at` is the latest successful read recorded for this token hash, installation, and repository.
+The API keeps at most 10,000 success timestamps in memory. It removes the oldest when full.
+History resets on API restart. It is not shared across tokens or API processes. Tokens are not stored in history.
+Use persistent shared storage if history must survive restarts or span API replicas.
+
+Coverage measures alert access. It does not confirm that dependency scanning is enabled.
+GitHub's separate settings endpoint requires read-only Administration access. CroCode does not request that permission.
+
+The dashboard filters advisory text, repository, package, severity, dependency scope, and patch availability on the current repository page.
+Filters do not change this API response. Coverage stays unfiltered. Page links preserve filters in the dashboard URL.

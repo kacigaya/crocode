@@ -58,6 +58,7 @@ These steps follow the official [app registration guide](https://docs.github.com
    | --- | --- | --- |
    | Contents | Read-only | Read code and base-commit config. Fetch PR heads. |
    | Pull requests | Read and write | Read diffs. Create `COMMENT` reviews. |
+   | Dependabot alerts | Read-only | Read open dependency alerts for the dashboard. |
    | Metadata | Read-only | Identify repositories. GitHub includes this permission. |
 
 8. Set organization **Members** to **Read-only**.
@@ -97,3 +98,15 @@ These steps follow the official [app registration guide](https://docs.github.com
 A manual redelivery with the same delivery ID returns `200` with `duplicate delivery` after a successful delivery.
 A new delivery ID for the same PR head does not queue another review.
 An invalid signature returns `401` before the handler records a delivery.
+
+## Enable the vulnerability panel on an existing App
+
+1. Open the GitHub App settings.
+2. Under **Permissions & events**, set repository **Dependabot alerts** to **Read-only**.
+3. Save the change.
+4. Approve the new permission for each installation on GitHub.
+5. Enable Dependabot alerts in each repository's security settings.
+6. Sign in to CroCode again if the current session still cannot read alerts.
+
+The dashboard uses the signed-in user's access. The user must be allowed to read security alerts.
+Repositories without that access show a warning. Review sandbox tokens do not receive this permission.

@@ -51,6 +51,7 @@ describe("manifest", () => {
     expect(manifest.default_permissions).toEqual({
       contents: "read",
       pull_requests: "write",
+      vulnerability_alerts: "read",
       metadata: "read",
       members: "read",
     });
