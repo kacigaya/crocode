@@ -1,5 +1,6 @@
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
+import { cn } from "@/lib/utils";
 
 export type Crumb = { label: string; href?: string };
 
@@ -73,26 +74,40 @@ export function PageHeader({
   );
 }
 
+export type Stat = {
+  label: string;
+  value: React.ReactNode;
+  hint?: React.ReactNode;
+  /** Small visual under the value, such as a meter. */
+  extra?: React.ReactNode;
+};
+
 export function StatGrid({
   label,
   stats,
+  className = "lg:grid-cols-4",
 }: {
   label: string;
-  stats: { label: string; value: React.ReactNode; hint?: string }[];
+  stats: Stat[];
+  className?: string;
 }) {
   return (
     <section aria-label={label}>
-      <dl className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <dl className={cn("grid grid-cols-2 gap-3", className)}>
         {stats.map((stat) => (
-          <div key={stat.label} className="rounded-xl border bg-card p-4">
+          <div
+            key={stat.label}
+            className="flex flex-col rounded-xl border bg-card p-4"
+          >
             <dt className="text-xs font-medium text-muted-foreground">
               {stat.label}
             </dt>
             <dd className="mt-1.5 text-2xl font-semibold tabular-nums">
               {stat.value}
             </dd>
+            {stat.extra && <dd className="mt-2">{stat.extra}</dd>}
             {stat.hint && (
-              <dd className="mt-1 text-xs text-muted-foreground">
+              <dd className="mt-auto pt-1 text-xs text-muted-foreground">
                 {stat.hint}
               </dd>
             )}

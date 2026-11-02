@@ -16,6 +16,7 @@ mod agents;
 mod api;
 mod db;
 mod github;
+mod models;
 mod review;
 mod sandbox;
 mod settings;
@@ -31,6 +32,7 @@ pub struct AppState {
     pub github: github::GitHub,
     pub settings: Arc<settings::Settings>,
     pub auth: Arc<api::AuthCache>,
+    pub pulls: Arc<api::PullCache>,
 }
 
 const USAGE: &str = "usage: crocode <api|worker|all|migrate>";
@@ -72,6 +74,7 @@ async fn main() -> Result<()> {
         )?,
         settings,
         auth: Arc::default(),
+        pulls: Arc::default(),
     };
 
     let shutdown = CancellationToken::new();

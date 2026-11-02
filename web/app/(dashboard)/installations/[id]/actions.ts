@@ -9,7 +9,7 @@ import { DEFAULT_AGENT, type Agents, type Installation } from "@/lib/types";
 
 export async function saveSettings(id: string, form: FormData): Promise<never> {
   if (!validInstallationId(id)) notFound();
-  const target = `/installations/${id}`;
+  const target = `/installations/${id}/settings`;
   function failure(code: string): never {
     redirect(`${target}?error=${code}`);
   }

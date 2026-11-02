@@ -8,11 +8,12 @@ import {
   PatchDiff,
 } from "@pierre/diffs/react";
 import { useMemo } from "react";
-import { StatusBadge } from "@/components/status-badge";
+import { severityColor, StatusBadge } from "@/components/status-badge";
 import { useIsDark } from "@/components/theme-toggle";
 import { Badge } from "@/components/ui/badge";
 import { filePatch, newSideLines } from "@/lib/patch";
 import { SEVERITIES, type Finding, type ReviewFile } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 type ThemeType = "system" | "light" | "dark";
 
@@ -44,9 +45,39 @@ export function ReviewFindings({
   );
   return (
     <div className="space-y-6">
-      {ordered.map(([path, list]) => (
+      {ordered.length > 1 && (
+        <nav aria-label="Files with findings" className="rounded-xl border bg-card">
+          <ol className="divide-y text-sm">
+            {ordered.map(([path, list], index) => {
+              const worst = SEVERITIES[Math.min(...list.map(rank))];
+              return (
+                <li key={path}>
+                  <a
+                    href={`#file-${index}`}
+                    className="flex items-center gap-2.5 rounded-sm px-4 py-2 hover:bg-accent"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={cn("size-2 shrink-0 rounded-full", severityColor[worst])}
+                    />
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs">
+                      {path}
+                    </span>
+                    <span className="text-xs tabular-nums text-muted-foreground">
+                      {list.length} {list.length === 1 ? "finding" : "findings"}
+                      <span className="sr-only">, worst is {worst}</span>
+                    </span>
+                  </a>
+                </li>
+              );
+            })}
+          </ol>
+        </nav>
+      )}
+      {ordered.map(([path, list], index) => (
         <FileFindings
           key={path}
+          id={`file-${index}`}
           path={path}
           patch={patches.get(path) ?? null}
           findings={list.toSorted((a, b) => a.line - b.line || rank(a) - rank(b))}
@@ -58,11 +89,13 @@ export function ReviewFindings({
 }
 
 function FileFindings({
+  id,
   path,
   patch,
   findings,
   themeType,
 }: {
+  id: string;
   path: string;
   patch: string | null;
   findings: Finding[];
@@ -98,7 +131,11 @@ function FileFindings({
   );
 
   return (
-    <section aria-label={path} className="overflow-hidden rounded-xl border">
+    <section
+      id={id}
+      aria-label={path}
+      className="scroll-mt-20 overflow-hidden rounded-xl border"
+    >
       {full !== null && annotations.length > 0 ? (
         <PatchDiff
           patch={full}

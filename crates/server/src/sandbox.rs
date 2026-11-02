@@ -30,6 +30,8 @@ pub struct Job<'a> {
     /// Names of variables copied from the worker environment.
     pub passthrough: Vec<String>,
     pub stdin: String,
+    /// Mounts the Codex credential store. Only Codex review runs need it.
+    pub codex_auth: bool,
 }
 
 #[derive(Debug)]
@@ -158,7 +160,8 @@ fn docker_command(settings: &Settings, job: &Job<'_>) -> Command {
         job.output_dir.display(),
         CONTAINER_PATHS.2
     ));
-    if job.argv.first().is_some_and(|program| program == "codex")
+    if job.codex_auth
+        && job.argv.first().is_some_and(|program| program == "codex")
         && let Some(directory) = &settings.codex_auth_dir
     {
         c.arg(format!(
@@ -310,7 +313,12 @@ mod tests {
     fn codex_auth_mount_is_not_shared_with_other_agents() {
         let mut settings = Settings::for_test();
         settings.codex_auth_dir = Some("/private/codex-auth".into());
-        for program in ["codex", "claude", "opencode"] {
+        for (program, codex_auth) in [
+            ("codex", true),
+            ("codex", false),
+            ("claude", true),
+            ("opencode", true),
+        ] {
             let job = Job {
                 name: "test".into(),
                 repo_dir: Path::new("/repo"),
@@ -320,6 +328,7 @@ mod tests {
                 env: Vec::new(),
                 passthrough: Vec::new(),
                 stdin: String::new(),
+                codex_auth,
             };
             let command = docker_command(&settings, &job);
             let args: Vec<_> = command
@@ -329,7 +338,7 @@ mod tests {
                 .collect();
             assert_eq!(
                 args.iter().any(|s| s.contains("/private/codex-auth")),
-                program == "codex"
+                program == "codex" && codex_auth
             );
             assert!(args.iter().any(|s| s == "--read-only"));
             assert!(args.iter().any(|s| s == "--security-opt=no-new-privileges"));

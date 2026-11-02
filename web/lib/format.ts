@@ -51,7 +51,13 @@ export function formatRelative(value: string, now = Date.now()) {
 /** "2m 41s" between two times, or null when either is missing. */
 export function formatDuration(start: string, end: string | null) {
   if (!end) return null;
-  const seconds = Math.round((Date.parse(end) - Date.parse(start)) / 1000);
+  return formatSeconds((Date.parse(end) - Date.parse(start)) / 1000);
+}
+
+/** "2m 41s" for a number of seconds, or null when it is not valid. */
+export function formatSeconds(value: number | null) {
+  if (value === null) return null;
+  const seconds = Math.round(value);
   if (!Number.isFinite(seconds) || seconds < 0) return null;
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);

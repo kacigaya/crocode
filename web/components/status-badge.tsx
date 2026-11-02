@@ -22,3 +22,12 @@ export function StatusBadge({ value }: { value: ReviewStatus | Severity }) {
     </Badge>
   );
 }
+
+/** Mark color for each severity. Always show the severity name next to it. */
+export const severityColor: Record<Severity, string> = {
+  critical: "bg-destructive",
+  high: "bg-destructive/70",
+  medium: "bg-warning",
+  low: "bg-info",
+  info: "bg-muted-foreground/50",
+};

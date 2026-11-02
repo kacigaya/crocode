@@ -329,17 +329,21 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       content: <>
         <ol>
           <li>Choose an installation from the overview or sidebar.</li>
+          <li>Open the <strong>Settings</strong> tab.</li>
           <li>Turn reviews on or off.</li>
-          <li>Choose an enabled agent. Leave the model blank to use its default.</li>
+          <li>Choose an enabled agent.</li>
+          <li>Choose a model from the list, or type a model name. Leave the model blank to use the agent default.</li>
           <li>Save the settings.</li>
         </ol>
+        <p>The model list shows the models that each agent CLI reports. The worker checks them at start and every 6 hours.</p>
+        <p>The <strong>Overview</strong> tab shows open pull requests and the state of their newest review. It also shows review totals, reviews per day, and findings by severity for the last 30 days.</p>
         <p>Only the account owner or an active organization admin can change settings. The server checks this access again when you save. Repository config can override the installation’s agent and model.</p>
       </>,
     },
     {
       id: "reviews", title: "Read a review",
       content: <>
-        <p>Open a review from the installation history. The page shows the head commit, agent, model, attempts, summary, and findings grouped by severity.</p>
+        <p>Open a review from the installation overview. The page shows the pull request state, branches, and size from GitHub. The <strong>Summary</strong> tab shows the agent summary, agent, model, and attempts. The <strong>Findings</strong> tab shows each finding in its diff. The <strong>Timeline</strong> tab lists every review of the pull request.</p>
         <Table headings={["Status", "Meaning"]} rows={[
           ["queued", "Waiting for a worker."], ["running", "A worker claimed the job."],
           ["succeeded", "The review finished."], ["failed", "The job failed."],
@@ -431,12 +435,15 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       content: <Table headings={["Method", "Path", "Result"]} rows={[
         ["GET", <code key="health">/healthz</code>, "No authentication. Returns ok."],
         ["GET", <code key="me">/api/v1/me</code>, "Signed-in user ID and login."],
-        ["GET", <code key="agents">/api/v1/agents</code>, "Enabled agents and server default."],
+        ["GET", <code key="agents">/api/v1/agents</code>, "Enabled agents, server default, and detected models."],
         ["GET", <code key="installs">/api/v1/installations</code>, "Accessible installations that exist in the database."],
         ["GET", <code key="install">/api/v1/installations/{"{id}"}</code>, "One accessible installation."],
         ["PATCH", <code key="settings">/api/v1/installations/{"{id}"}/settings</code>, "Update settings. Requires can_admin."],
-        ["GET", <code key="reviews">/api/v1/installations/{"{id}"}/reviews</code>, "Review history, newest first."],
+        ["GET", <code key="reviews">/api/v1/installations/{"{id}"}/reviews</code>, "Review history, newest first. Filter by repo and pr."],
+        ["GET", <code key="stats">/api/v1/installations/{"{id}"}/stats</code>, "Review totals for the last 30 days."],
+        ["GET", <code key="pulls">/api/v1/installations/{"{id}"}/pulls</code>, "Open pull requests with their newest review."],
         ["GET", <code key="review">/api/v1/reviews/{"{id}"}</code>, "One review with its summary and findings."],
+        ["GET", <code key="review-pull">/api/v1/reviews/{"{id}"}/pull</code>, "Live pull request details from GitHub."],
       ]} />,
     },
     {
@@ -451,7 +458,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
     {
       id: "review-history", title: "Review history",
       content: <>
-        <p>Use <code>limit</code> from 1 to 100. The default is 50. Supply an RFC 3339 timestamp as <code>before</code> for older reviews.</p>
+        <p>Use <code>limit</code> from 1 to 100. The default is 50. Supply an RFC 3339 timestamp as <code>before</code> for older reviews. Add <code>repo</code> and <code>pr</code> together to list the reviews of one pull request.</p>
         <CodeBlock label="Request path" code="/api/v1/installations/123/reviews?limit=50&before=2026-11-01T10:00:00Z" />
         <CodeBlock label="JSON · review list" code={'[\n  {\n    "id": "6f1c0b9e-1a2b-4c3d-8e9f-0a1b2c3d4e5f",\n    "installation_id": 123,\n    "repo_full_name": "acme/api",\n    "pr_number": 42,\n    "pr_title": "Add login",\n    "head_sha": "abc123...",\n    "status": "succeeded",\n    "agent": "claude",\n    "model": null,\n    "attempts": 1,\n    "finding_count": 3,\n    "error": null,\n    "created_at": "2026-11-01T10:00:00Z",\n    "finished_at": "2026-11-01T10:03:00Z"\n  }\n]'} />
         <p>Status is <code>queued</code>, <code>running</code>, <code>succeeded</code>, <code>failed</code>, <code>cancelled</code>, or <code>skipped</code>. The agent is null until a worker selects one.</p>
