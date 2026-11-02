@@ -1,4 +1,3 @@
-import { FileSearch, Lock, Server } from "lucide-react";
 import Image from "next/image";
 import { redirect } from "next/navigation";
 import { GitHubMark } from "@/components/github-mark";
@@ -6,6 +5,7 @@ import { SiteHeader } from "@/components/site-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { readSession } from "@/lib/auth";
+import { setupAvailable } from "@/lib/config";
 import { signIn } from "./auth-actions";
 
 const messages: Record<string, string> = {
@@ -15,17 +15,14 @@ const messages: Record<string, string> = {
 
 const features = [
   {
-    icon: Lock,
     title: "Read-only agents",
     body: "Claude Code, Codex, or OpenCode run in a locked container with a read-only checkout and no GitHub token.",
   },
   {
-    icon: FileSearch,
     title: "Checked findings",
     body: "CroCode drops findings outside the diff, removes duplicates, and posts inline comments with suggested fixes.",
   },
   {
-    icon: Server,
     title: "Your infrastructure",
     body: "Self-host the API, workers, and dashboard with Docker Compose on ARM64 or AMD64.",
   },
@@ -36,6 +33,7 @@ export default async function Home({
 }: {
   searchParams: Promise<{ auth?: string; error?: string }>;
 }) {
+  if (setupAvailable()) redirect("/setup");
   const { auth, error } = await searchParams;
   // `auth` is set when the API refused the token; stay here so the user can
   // sign in again instead of looping back to the dashboard.
@@ -97,12 +95,14 @@ export default async function Home({
         </section>
         <section
           aria-label="Features"
-          className="mx-auto grid max-w-5xl gap-3 px-6 pb-20 sm:grid-cols-3"
+          className="mx-auto grid max-w-5xl gap-4 px-6 pb-20 sm:grid-cols-2 lg:grid-cols-3"
         >
-          {features.map(({ icon: Icon, title, body }) => (
-            <div key={title} className="rounded-xl border bg-card p-5">
-              <Icon aria-hidden="true" className="size-5 text-brand" />
-              <h2 className="mt-3 font-semibold">{title}</h2>
+          {features.map(({ title, body }) => (
+            <div
+              key={title}
+              className="relative rounded-2xl border bg-card p-6 text-card-foreground shadow-xs/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]"
+            >
+              <h2 className="text-lg leading-none font-semibold">{title}</h2>
               <p className="mt-1.5 text-pretty text-sm text-muted-foreground">
                 {body}
               </p>
