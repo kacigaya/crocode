@@ -27,7 +27,12 @@ export type Installation = {
   can_admin: boolean;
 };
 export type ReviewStatus =
-  "queued" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "skipped";
 export type Review = {
   id: string;
   installation_id: number;
@@ -126,4 +131,42 @@ export type PullDetail = {
   changed_files: number;
   commits: number;
   created_at: string;
+};
+
+export type DependencyAlert = {
+  number: number;
+  dependency: {
+    package: { ecosystem: string; name: string };
+    manifest_path: string;
+    scope: string | null;
+  };
+  security_advisory: {
+    ghsa_id: string;
+    cve_id: string | null;
+    summary: string;
+  };
+  security_vulnerability: {
+    severity: string;
+    vulnerable_version_range: string;
+    first_patched_version: { identifier: string } | null;
+  };
+};
+export type CoverageStatus =
+  | "readable"
+  | "access_denied"
+  | "unavailable"
+  | "rate_limited"
+  | "timed_out"
+  | "failed";
+export type RepositoryAlerts = {
+  repo_full_name: string;
+  alerts: DependencyAlert[] | null;
+  coverage: CoverageStatus;
+  checked_at: string;
+  last_success_at: string | null;
+};
+export type VulnerabilityReport = {
+  total_repositories: number;
+  next_page: number | null;
+  repositories: RepositoryAlerts[];
 };

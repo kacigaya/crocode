@@ -22,6 +22,7 @@ fn state(pool: PgPool) -> AppState {
         settings: Arc::new(Settings::for_test()),
         auth: Arc::default(),
         pulls: Arc::default(),
+        vulnerability_checks: Arc::default(),
     }
 }
 
@@ -538,6 +539,7 @@ async fn api_missing_bearer_token_is_unauthorized_without_io() {
         "/api/v1/installations",
         "/api/v1/installations/1",
         "/api/v1/installations/1/reviews",
+        "/api/v1/installations/1/vulnerabilities",
         "/api/v1/reviews/00000000-0000-0000-0000-000000000001",
     ] {
         let response = app
@@ -814,4 +816,49 @@ async fn agent_models_replace_and_show_only_enabled_agents(pool: PgPool) {
             "models": {"codex": [{"id": "gpt-6", "name": "gpt-6"}], "claude": []},
         })
     );
+}
+
+#[tokio::test]
+async fn vulnerability_access_and_page_validation_need_no_external_io() {
+    let settings = Settings::for_test();
+    let pool = PgPool::connect_lazy(&settings.database_url).unwrap();
+    let state = state(pool);
+    let key: [u8; 32] = <Sha256 as sha2::Digest>::digest(b"test-token").into();
+    state.auth.put(
+        key,
+        crate::api::Access {
+            user: crate::github::User {
+                id: 1,
+                login: "octocat".into(),
+            },
+            installations: [(1, false)].into_iter().collect(),
+        },
+    );
+    let app = router(state);
+    for (path, status) in [
+        (
+            "/api/v1/installations/2/vulnerabilities",
+            StatusCode::NOT_FOUND,
+        ),
+        (
+            "/api/v1/installations/1/vulnerabilities?page=0",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "/api/v1/installations/1/vulnerabilities?page=1000001",
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(path)
+                    .header("authorization", "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status, "{path}");
+    }
 }

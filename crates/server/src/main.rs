@@ -20,6 +20,7 @@ mod models;
 mod review;
 mod sandbox;
 mod settings;
+mod vulnerabilities;
 mod webhook;
 mod worker;
 
@@ -33,6 +34,7 @@ pub struct AppState {
     pub settings: Arc<settings::Settings>,
     pub auth: Arc<api::AuthCache>,
     pub pulls: Arc<api::PullCache>,
+    pub vulnerability_checks: Arc<vulnerabilities::CheckHistory>,
 }
 
 const USAGE: &str = "usage: crocode <api|worker|all|migrate>";
@@ -75,6 +77,7 @@ async fn main() -> Result<()> {
         settings,
         auth: Arc::default(),
         pulls: Arc::default(),
+        vulnerability_checks: Arc::default(),
     };
 
     let shutdown = CancellationToken::new();
