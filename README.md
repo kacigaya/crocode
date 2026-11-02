@@ -142,6 +142,10 @@ example config enables Claude and OpenCode only. See
 
 ## Documentation
 
+Read the [documentation site](https://kacigaya.github.io/crocode/docs/) on GitHub Pages.
+It needs no sign-in. A local copy is also available at `/docs` on the dashboard.
+The source guides are available here:
+
 - [GitHub App setup](docs/github-app.md)
 - [Dashboard](docs/dashboard.md)
 - [Configuration](docs/configuration.md)

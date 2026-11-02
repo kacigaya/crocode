@@ -3,6 +3,10 @@
 web/.next
 web/out
 web/next-env.d.ts
+web/site/.next
+web/site/out
+web/site/public
+web/site/next-env.d.ts
 .env
 .env.*
 !.env.example

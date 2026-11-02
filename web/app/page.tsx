@@ -2,10 +2,12 @@ import Image from "next/image";
 import { redirect } from "next/navigation";
 import { GitHubMark } from "@/components/github-mark";
 import { SiteHeader } from "@/components/site-header";
+import { SiteFooter } from "@/components/site-footer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { readSession } from "@/lib/auth";
 import { setupAvailable } from "@/lib/config";
+import { DOCS_URL } from "@/lib/docs-site";
 import { signIn } from "./auth-actions";
 
 const messages: Record<string, string> = {
@@ -87,7 +89,7 @@ export default async function Home({
             <Button
               size="xl"
               variant="outline"
-              render={<a href="https://github.com/kacigaya/crocode#readme" />}
+              render={<a href={DOCS_URL} />}
             >
               Read the docs
             </Button>
@@ -110,9 +112,7 @@ export default async function Home({
           ))}
         </section>
       </main>
-      <footer className="mx-auto max-w-5xl border-t px-6 py-8 text-xs text-muted-foreground">
-        CroCode · Self-hosted GitHub code review · Apache 2.0
-      </footer>
+      <SiteFooter />
     </>
   );
 }

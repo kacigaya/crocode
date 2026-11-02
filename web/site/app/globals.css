@@ -1,0 +1,5 @@
+@import "../../app/globals.css";
+
+@source "../../components";
+@source "../../lib";
+@source "../../app/docs";

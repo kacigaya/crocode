@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { asset } from "@/lib/docs-site";
 
 export function Brand({ href }: { href: string }) {
   return (
@@ -7,7 +8,7 @@ export function Brand({ href }: { href: string }) {
       href={href}
       className="inline-flex items-center gap-2.5 rounded-md text-[0.9375rem] font-extrabold"
     >
-      <Image src="/logo.svg" alt="" width={28} height={20} priority />
+      <Image src={asset("/logo.svg")} alt="" width={28} height={20} priority />
       CroCode
     </Link>
   );

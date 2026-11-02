@@ -9,6 +9,7 @@ import { Brand, Monogram } from "@/components/brand";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { DOCS_URL } from "@/lib/docs-site";
 
 export type NavInstallation = {
   id: number;
@@ -96,7 +97,8 @@ export function AppNav({ installations, installUrl, onNavigate }: NavProps) {
       <ul className="space-y-0.5">
         <li>
           <a
-            href="https://github.com/kacigaya/crocode#readme"
+            href={DOCS_URL}
+            onClick={onNavigate}
             className={itemClass}
           >
             <BookOpen aria-hidden="true" className="size-4" />

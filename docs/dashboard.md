@@ -3,6 +3,28 @@
 The dashboard uses Next.js 16.4.3, React 19.3.1, Tailwind CSS 4, and Coss UI.
 Use Bun 1.3.14. All dashboard files are in `web/`.
 
+## Documentation
+
+Read the [public docs](https://kacigaya.github.io/crocode/docs/) on GitHub Pages.
+The dashboard also serves a local copy at `/docs`. The guides cover setup, configuration,
+agents, dashboard use, security, the REST API, and development. They need no
+sign-in or GitHub credentials. The landing page and dashboard link to the public site.
+
+Navigation and page metadata live in `web/lib/docs-nav.ts`. Article sections
+live in `web/lib/docs-content.tsx`. Keep them aligned with the Markdown files
+in `docs/`, `README.md`, and `docker/README.md`. The articles use React components
+to avoid a Markdown runtime dependency.
+
+The static app in `web/site/` reuses these articles and components. It excludes
+dashboard, setup, and authentication routes. Run `bun run build:docs` from `web/`
+to export it to `web/site/out/`. Run `bun run scripts/check-docs-export.ts` to
+check local links, assets, canonical URLs, and the static route boundary.
+
+`.github/workflows/pages.yml` checks the export on pull requests and publishes
+it after a push to `main`. GitHub Pages uses the GitHub Actions build source.
+The site uses the `/crocode` base path. `NEXT_PUBLIC_BASE_PATH` can override the
+path for a local test. `web/lib/docs-site.ts` holds the public site URL.
+
 ## Local setup
 
 1. Run `bun install` in `web/`.

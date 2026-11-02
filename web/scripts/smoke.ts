@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { resolve } from "node:path";
 import { createAuth } from "../lib/auth-config";
+import { DOCS_PAGES } from "../lib/docs-nav";
 
 const secret = randomBytes(32).toString("hex");
 const token = "smoke-test-only-token";
@@ -278,6 +279,20 @@ try {
   assert.match(response.headers.get("location") ?? "", /\/installations$/);
   response = await get("/installations", null);
   assert.equal(response.headers.get("location"), "/");
+  console.log("Checking public documentation");
+  const apiCallsBeforeDocs = calls.length;
+  for (const page of DOCS_PAGES) {
+    const docResponse = await get(page.href, null);
+    assert.equal(docResponse.status, 200, page.href);
+    const html = await docResponse.text();
+    assert.ok(html.includes(`<h1 id="doc-title"`), `${page.href} has an article`);
+    assert.ok(html.includes(`${page.title} · Docs · CroCode`), `${page.href} has a page title`);
+    assert.ok(html.includes('aria-current="page"'), `${page.href} has an active nav item`);
+    assert.ok(!html.includes(token), `${page.href} has no access token`);
+  }
+  assert.equal(calls.length, apiCallsBeforeDocs, "Docs make no authenticated API calls");
+  const missingDoc = await get("/docs/missing", null);
+  assert.equal(missingDoc.status, 404);
   console.log("Checking installations");
   response = await get("/installations");
   const installations = await response.text();
@@ -468,7 +483,7 @@ try {
       `Sign-out clears ${name}`,
     );
   console.log(
-    "PASS: standalone runtime; Better Auth GitHub flow, landing, installations, settings, admin guard, pagination, review escaping, empty/404/401, expired token, disabled token endpoints, sign-in and sign-out actions.",
+    "PASS: standalone runtime; public docs, Better Auth GitHub flow, landing, installations, settings, admin guard, pagination, review escaping, empty/404/401, expired token, disabled token endpoints, sign-in and sign-out actions.",
   );
 } catch (error) {
   console.error(output, calls);
