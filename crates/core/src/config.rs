@@ -52,7 +52,7 @@ impl Default for RepoConfig {
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("invalid {CONFIG_PATH}: {0}")]
-    Yaml(#[from] serde_yaml_ng::Error),
+    Yaml(#[from] serde_saphyr::Error),
     #[error("invalid {CONFIG_PATH}: bad ignore pattern {pattern:?}: {source}")]
     Glob {
         pattern: String,
@@ -78,7 +78,7 @@ impl RepoConfig {
         if text.trim().is_empty() {
             return Ok(Self::default());
         }
-        let mut config: Self = serde_yaml_ng::from_str(text)?;
+        let mut config: Self = serde_saphyr::from_str(text)?;
         config.max_comments = config.max_comments.min(MAX_COMMENTS_LIMIT);
         if let Some(text) = &mut config.instructions {
             truncate_chars(text, MAX_INSTRUCTIONS_CHARS);
@@ -144,6 +144,36 @@ mod tests {
     fn rejects_unknown_fields_and_bad_globs() {
         assert!(RepoConfig::parse("agnet: codex").is_err());
         assert!(RepoConfig::parse("ignore: ['a[']").is_err());
+    }
+
+    #[test]
+    fn yaml_supports_comments_aliases_blocks_and_quoted_strings() {
+        let config = RepoConfig::parse(
+            "# Review settings\nagent: &agent 'codex'\nmodel: *agent\nenabled: false\n\
+             ignore:\n  - 'docs/**'\ninstructions: |\n  Check access.\n  Check input.\n",
+        )
+        .unwrap();
+        assert!(!config.enabled);
+        assert_eq!(config.agent.as_deref(), Some("codex"));
+        assert_eq!(config.model.as_deref(), Some("codex"));
+        assert_eq!(
+            config.instructions.as_deref(),
+            Some("Check access.\nCheck input.\n")
+        );
+        assert_eq!(config.ignore, ["docs/**"]);
+    }
+
+    #[test]
+    fn yaml_rejects_duplicates_multiple_documents_and_wrong_types() {
+        for text in [
+            "enabled: true\nenabled: false",
+            "enabled: true\n---\nenabled: false",
+            "enabled: [true]",
+            "max_comments: -1",
+            "ignore: [",
+        ] {
+            assert!(RepoConfig::parse(text).is_err(), "accepted {text:?}");
+        }
     }
 
     #[test]

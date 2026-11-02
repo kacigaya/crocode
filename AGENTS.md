@@ -4,7 +4,7 @@
 
 - `crates/core`: pure review logic. Config, diff parsing, finding validation, prompts. No I/O.
 - `crates/server`: `crocode` binary. Axum API, GitHub client, Postgres queue, worker, sandbox runner.
-- `migrations`: SQLx migrations. The server runs them at startup.
+- `migrations`: SQLx migrations. Run `crocode migrate` with `MIGRATION_DATABASE_URL` before starting the API or worker.
 - `web`: Next.js dashboard (App Router, Tailwind CSS, coss ui).
 - `docker`: container images. `docker/sandbox` is the read-only agent image.
 
@@ -12,11 +12,11 @@
 
 - Rust checks: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all`.
 - OSV tool tests: `node --test crates/server/src/osv.test.mjs` with Node.js 24 or later. The sandbox image includes Node.js 24.
-- Database tests: `DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/postgres cargo test --all -- --include-ignored`. SQLx needs a user that can create databases. Plain tests skip these 11 tests.
+- Database tests: `DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/postgres cargo test --all -- --include-ignored`. SQLx needs a user that can create databases. Plain tests skip database integration tests.
 - Compose database: `sudo docker compose up -d postgres` after `.env` setup. From a host test process, use a reachable Postgres URL; Compose does not publish its database port.
 - Web checks (in `web/`): `bun install --frozen-lockfile`, `bun run lint`, `bun run typecheck`, `bun test`, `bun run build`.
 - Docs checks (in `web/`): `bun run build:docs`, `bun run scripts/check-docs-export.ts`. GitHub Pages publishes `web/site/out/` at `https://kacigaya.github.io/crocode/` through `.github/workflows/pages.yml`. The static app uses base path `/crocode` and excludes dashboard and auth routes.
-- Backend: `sudo docker compose up -d --build postgres api worker`.
+- Backend: `sudo docker compose up -d --build postgres migrate api worker`.
 - Dashboard after its Dockerfile merge: `sudo docker compose --profile dashboard up -d --build`.
 - Images: `sudo docker build -t crocode:latest .` and `sudo docker build -t crocode-sandbox:latest docker/sandbox`.
 - Compose validation: `sudo docker compose config --quiet` and `sudo docker compose --profile dashboard config --quiet`.

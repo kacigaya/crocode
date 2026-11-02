@@ -76,7 +76,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       content: <>
         <CodeBlock label="Terminal" code={'git clone https://github.com/kacigaya/crocode.git\ncd crocode\ncp .env.example .env\nchmod 600 .env\nstat -c \'%g\' /var/run/docker.sock'} />
         <ol>
-          <li>Set <code>POSTGRES_PASSWORD</code> in <code>.env</code>. Use the same password in <code>DATABASE_URL</code>.</li>
+          <li>Set separate <code>POSTGRES_PASSWORD</code> and <code>CROCODE_DB_PASSWORD</code> values in <code>.env</code>. Match the first to <code>MIGRATION_DATABASE_URL</code> and the second to <code>DATABASE_URL</code>.</li>
           <li>Set the model credentials for your agent. For a Claude subscription, set <code>CLAUDE_CODE_OAUTH_TOKEN</code> and leave <code>ANTHROPIC_API_KEY</code> empty.</li>
           <li>Set <code>DOCKER_GID</code> to the socket group ID printed by the command above.</li>
           <li>Leave the GitHub App values empty. The setup page creates them.</li>
@@ -217,15 +217,17 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
     {
       id: "environment", title: "Environment files",
       content: <>
-        <p>Compose reads the backend <code>.env</code> for variable substitution. The worker loads it through <code>env_file</code>. The API receives only its named variables and no model credentials.</p>
+        <p>Compose reads the backend <code>.env</code> for variable substitution. The worker loads it through <code>env_file</code>. The API receives only its named variables and no model credentials. Compose clears database setup credentials from the worker environment.</p>
         <p>Keep dashboard secrets in <code>web/.env</code>. Compose sets <code>CROCODE_API_URL=http://api:8080</code>. For local web development, use <code>web/.env.local</code>.</p>
-        <p>The Rust binary reads environment variables at startup. It does not load <code>.env</code> itself. The API and worker apply database migrations at startup.</p>
+        <p>Existing databases need a one-time account setup before this upgrade. Follow the <a href="https://github.com/kacigaya/crocode/blob/main/docs/configuration.md#database-setup-and-upgrades">database upgrade steps</a>. Keep the existing database volume.</p>
+        <p>The Rust binary reads environment variables at startup. It does not load <code>.env</code> itself. Compose runs <code>crocode migrate</code> before the API and worker start. Runtime services use a restricted database account.</p>
       </>,
     },
     {
       id: "core-settings", title: "Core settings",
       content: <Table headings={["Variable", "Default", "Purpose"]} rows={[
-        [<code key="db">DATABASE_URL</code>, "Required", "Postgres connection URL."],
+        [<code key="db">DATABASE_URL</code>, "Required", "Restricted Postgres runtime account. Privileged roles are rejected."],
+        [<code key="migrationdb">MIGRATION_DATABASE_URL</code>, "Migration process only", "Setup account for crocode migrate. Keep it out of runtime services."],
         [<code key="bind">CROCODE_BIND</code>, "0.0.0.0:8080", "API listen address."],
         [<code key="dir">CROCODE_CONFIG_DIR</code>, "Unset", "Directory containing github-app.json. Compose uses /config."],
         [<code key="id">GITHUB_APP_ID</code>, "Required without setup", "Numeric App ID. Enables environment-based GitHub settings."],
@@ -406,7 +408,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
     {
       id: "known-limits", title: "Known limits",
       content: <>
-        <p>The database stores review text and findings without an automatic retention policy. Protect it and its backups as source-code data. A host crash can leave checkout files behind.</p>
+        <p>The worker removes completed reviews after 30 days. It removes deleted installations’ reviews on its next cleanup pass. Cleanup runs once per minute and removes findings and patches too. Active jobs remain unless their installation is deleted. Protect the database and its backups as source-code data. Backups and GitHub reviews need a separate retention policy. A host crash can leave checkout files behind.</p>
         <p>Cancellation can take until the next heartbeat. The installation concurrency cap is soft. A crash between GitHub publication and its database update can cause a duplicate review on retry.</p>
         <p>Read the <a href="https://github.com/kacigaya/crocode/blob/main/docs/security.md">full security model</a> for verification results and dependency advisories.</p>
       </>,
@@ -471,14 +473,14 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
         [<code key="core">crates/core</code>, "Pure review logic: config, diff parsing, finding validation, and prompts. No I/O."],
         [<code key="server">crates/server</code>, "Axum API, GitHub client, Postgres queue, worker, and sandbox runner."],
         [<code key="web">web</code>, "Next.js dashboard and documentation. Bun is the package manager and test runner."],
-        [<code key="migrations">migrations</code>, "SQLx migrations applied at server startup."],
+        [<code key="migrations">migrations</code>, "SQLx migrations applied by crocode migrate before runtime startup."],
         [<code key="sandbox">docker/sandbox</code>, "Read-only agent image."],
       ]} />,
     },
     {
       id: "rust", title: "Rust checks",
       content: <>
-        <p>Use Rust 1.88 or newer. Run from the repository root:</p>
+        <p>Use Rust 1.89 or newer. Run from the repository root:</p>
         <CodeBlock label="Terminal" code="cargo fmt --all --check\ncargo clippy --all-targets -- -D warnings\ncargo test --all" />
         <p>Plain tests skip database tests. To include them, set a reachable Postgres URL for a user that can create databases:</p>
         <CodeBlock label="Terminal · local test database" code={'DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/postgres \\\n  cargo test --all -- --include-ignored'} />

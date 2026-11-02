@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.rust-lang.org/"><img alt="Rust 1.88 or newer" src="https://shieldcn.dev/badge/Rust-1.88%2B-dea584.svg?variant=secondary&amp;logo=rust"></a>
+  <a href="https://www.rust-lang.org/"><img alt="Rust 1.89 or newer" src="https://shieldcn.dev/badge/Rust-1.89%2B-dea584.svg?variant=secondary&amp;logo=rust"></a>
   <a href="https://nextjs.org/"><img alt="Next.js 16" src="https://shieldcn.dev/badge/Next.js-16-000000.svg?variant=secondary&amp;logo=nextdotjs"></a>
   <a href="docker-compose.yml"><img alt="Docker Compose for ARM64 and AMD64" src="https://shieldcn.dev/badge/Docker_Compose-ARM64_%7C_AMD64-2496ed.svg?variant=secondary&amp;logo=docker"></a>
   <a href="https://github.com/kacigaya/crocode/blob/main/LICENSE"><img alt="Apache 2.0 License" src="https://shieldcn.dev/github/license/kacigaya/crocode.svg?variant=secondary"></a>
@@ -80,7 +80,8 @@ cd crocode
 cp .env.example .env && chmod 600 .env
 ```
 
-1. Set a database password and your agent credentials in `.env`.
+1. Set separate database setup and runtime passwords and your agent credentials in `.env`.
+   Keep each password consistent with its connection URL.
    For Claude, use an API key or a subscription token from `claude setup-token`.
    Leave the GitHub App values empty. The dashboard creates the app.
 2. Set `DOCKER_GID` to the output of `stat -c '%g' /var/run/docker.sock`.

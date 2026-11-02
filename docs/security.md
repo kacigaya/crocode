@@ -177,9 +177,18 @@ Selecting a Docker network does not create these firewall or proxy rules.
 A `none` network also blocks model access unless you provide a supported local route.
 
 The database stores summaries, findings, PR metadata, and redacted errors.
-There is no automatic review or finding retention policy.
+The worker removes completed reviews 30 days after completion.
+For legacy rows with no completion time, it uses the creation time.
+It also removes all reviews for deleted installations on the next cleanup pass.
+Cleanup runs once per minute and removes child findings and stored patches.
+Active reviews remain until completion unless their installation is deleted.
+Expired reviews no longer provide head-SHA or finding deduplication.
+Backups and GitHub-published reviews require a separate retention policy.
 Delivery-ID records expire after 7 days.
 Protect database access and backups as source-code data.
+Run migrations with a separate setup account. The API and worker reject privileged database roles.
+Compose creates a restricted runtime account and keeps setup credentials out of runtime services.
+Database row-level security is not configured. Installation access checks remain in the API.
 The API and dashboard need HTTPS at the public reverse proxy.
 
 ## Known limits and verification
@@ -199,10 +208,11 @@ A crash after GitHub accepts a review but before its ID is saved can cause a dup
 A unique head SHA prevents another queue row, including when the prior result was skipped.
 The current API has no manual rerun endpoint.
 
-A dependency scan found [RUSTSEC-2024-0449](https://rustsec.org/advisories/RUSTSEC-2024-0449.html) for `unsafe-libyaml 0.2.11`, a transitive YAML parser dependency.
-The advisory states that it is unmaintained.
-OSV supplied no severity or fixed version in the scan.
-A parser change needs a separate compatibility review of `.crocode.yml` behavior.
+The YAML parser uses `serde-saphyr` with only deserialization enabled.
+File includes and property substitution are not enabled.
+Compatibility tests cover config fields, aliases, comments, block strings, duplicate keys, multiple documents, and invalid input.
+This removes the unmaintained `unsafe-libyaml` dependency.
+The parser requires Rust 1.89 or later.
 
 The sandbox scan first found 19 advisories across 6 dependencies of npm.
 The runtime image now removes npm and Corepack after installing the agents.

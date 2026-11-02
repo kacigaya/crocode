@@ -33,12 +33,18 @@ pub struct AppState {
     pub auth: Arc<api::AuthCache>,
 }
 
-const USAGE: &str = "usage: crocode <api|worker|all>";
+const USAGE: &str = "usage: crocode <api|worker|all|migrate>";
 
 #[tokio::main]
 async fn main() -> Result<()> {
     init_tracing();
     let mode = std::env::args().nth(1).unwrap_or_default();
+    if mode == "migrate" {
+        let url = std::env::var("MIGRATION_DATABASE_URL")
+            .context("MIGRATION_DATABASE_URL is required for crocode migrate")?;
+        db::migrate(&url).await.context("migrate database")?;
+        return Ok(());
+    }
     let (serve_api, run_worker) = match mode.as_str() {
         "api" => (true, false),
         "worker" => (false, true),

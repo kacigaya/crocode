@@ -224,6 +224,11 @@ async fn reaper(state: AppState, shutdown: CancellationToken) {
         if let Err(err) = db::prune_deliveries(&state.db).await {
             warn!(error = %err, "prune webhook deliveries");
         }
+        match db::prune_reviews(&state.db).await {
+            Ok(0) => {}
+            Ok(n) => info!(count = n, "pruned reviews"),
+            Err(err) => warn!(error = %err, "prune reviews"),
+        }
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(60)) => {}
             _ = shutdown.cancelled() => return,

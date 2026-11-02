@@ -7,14 +7,27 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      CROCODE_DB_PASSWORD: ${CROCODE_DB_PASSWORD:?Set a separate runtime database password}
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init-runtime.sh:/docker-entrypoint-initdb.d/init-runtime.sh:ro
     healthcheck:
       test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
       interval: 5s
       timeout: 5s
       retries: 10
     restart: unless-stopped
+
+  migrate:
+    build: .
+    image: crocode:latest
+    command: [migrate]
+    environment:
+      MIGRATION_DATABASE_URL: ${MIGRATION_DATABASE_URL:?Set the migration database URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   api:
     build: .
@@ -42,8 +55,8 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   worker:
@@ -55,6 +68,10 @@ services:
     env_file: .env
     environment:
       CROCODE_CONFIG_DIR: /config
+      # env_file keeps custom provider variables. Remove setup credentials.
+      POSTGRES_PASSWORD: ""
+      CROCODE_DB_PASSWORD: ""
+      MIGRATION_DATABASE_URL: ""
     group_add:
       - "${DOCKER_GID:-0}"
     volumes:
@@ -66,8 +83,8 @@ services:
         bind:
           create_host_path: false
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     stop_grace_period: 30s
     restart: unless-stopped
 

@@ -562,3 +562,84 @@ async fn api_missing_bearer_token_is_unauthorized_without_io() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "needs DATABASE_URL"]
+async fn retention_removes_old_and_deleted_reviews_with_their_contents(pool: PgPool) {
+    installation(&pool, 1).await;
+    installation(&pool, 2).await;
+    let expired = enqueue(&pool, 1, 1).await;
+    let recent = enqueue(&pool, 1, 2).await;
+    let active = enqueue(&pool, 1, 3).await;
+    let running = enqueue(&pool, 1, 4).await;
+    let legacy = enqueue(&pool, 1, 5).await;
+    let deleted = enqueue(&pool, 2, 1).await;
+    for id in [expired, recent, active, running, legacy, deleted] {
+        db::insert_findings(
+            &pool,
+            id,
+            10,
+            1,
+            &[finding("retention", true)],
+            &[("src/login.rs", "private patch")],
+        )
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "UPDATE reviews SET status = 'succeeded',
+         created_at = now() - interval '60 days',
+         finished_at = CASE WHEN id = $1 THEN now() - interval '31 days' ELSE now() END
+         WHERE id = ANY($2)",
+    )
+    .bind(expired)
+    .bind(&[expired, recent][..])
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE reviews SET created_at = now() - interval '60 days' WHERE id = $1")
+        .bind(active)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE reviews SET created_at = now() - interval '60 days',
+         status = CASE WHEN id = $1 THEN 'running' ELSE 'cancelled' END
+         WHERE id = ANY($2)",
+    )
+    .bind(running)
+    .bind(&[running, legacy][..])
+    .execute(&pool)
+    .await
+    .unwrap();
+    db::set_installation_state(&pool, 2, false, true)
+        .await
+        .unwrap();
+
+    assert_eq!(db::prune_reviews(&pool).await.unwrap(), 3);
+    for id in [expired, legacy, deleted] {
+        assert!(db::review(&pool, id).await.unwrap().is_none());
+        let (findings, files) = db::review_contents(&pool, id).await.unwrap();
+        assert!(findings.is_empty());
+        assert!(files.is_empty());
+    }
+    for id in [recent, active, running] {
+        assert!(db::review(&pool, id).await.unwrap().is_some());
+        let (findings, files) = db::review_contents(&pool, id).await.unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(files.len(), 1);
+    }
+    assert_eq!(db::prune_reviews(&pool).await.unwrap(), 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "needs DATABASE_URL"]
+async fn runtime_connection_rejects_database_administrator(pool: PgPool) {
+    let options = pool.connect_options();
+    // SQLx integration tests require a database administrator. Never print its URL.
+    use sqlx::ConnectOptions;
+    let error = db::connect(options.to_url_lossy().as_str())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("restricted runtime role"));
+}
