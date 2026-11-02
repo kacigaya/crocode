@@ -6,11 +6,11 @@ import { SiteHeader } from "@/components/site-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { readSession } from "@/lib/auth";
+import { signIn } from "./auth-actions";
 
 const messages: Record<string, string> = {
-  state: "This sign-in request expired or could not be verified. Try again.",
-  denied: "GitHub sign-in was cancelled. Sign in to continue.",
-  exchange: "GitHub sign-in could not finish. Try again.",
+  expired: "Your session has expired. Sign in again.",
+  access_denied: "GitHub sign-in was cancelled. Sign in to continue.",
 };
 
 const features = [
@@ -34,10 +34,19 @@ const features = [
 export default async function Home({
   searchParams,
 }: {
-  searchParams: Promise<{ auth?: string }>;
+  searchParams: Promise<{ auth?: string; error?: string }>;
 }) {
-  if (await readSession()) redirect("/installations");
-  const { auth } = await searchParams;
+  const { auth, error } = await searchParams;
+  // `auth` is set when the API refused the token; stay here so the user can
+  // sign in again instead of looping back to the dashboard.
+  if (!auth && !error && (await readSession())) redirect("/installations");
+  // Better Auth sends OAuth failures back as `?error=<code>`.
+  const problem = auth ?? error;
+  const message = problem
+    ? Object.hasOwn(messages, problem)
+      ? messages[problem]
+      : "GitHub sign-in could not finish. Try again."
+    : null;
   return (
     <>
       <SiteHeader />
@@ -62,19 +71,21 @@ export default async function Home({
             Manage installations, set review defaults, and read every finding
             from one dashboard.
           </p>
-          {auth && messages[auth] && (
+          {message && (
             <p
               role="alert"
               className="mx-auto mt-6 max-w-md rounded-lg border border-destructive/30 px-4 py-3 text-sm text-destructive-foreground"
             >
-              {messages[auth]}
+              {message}
             </p>
           )}
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <Button size="xl" render={<a href="/api/auth/login" />}>
-              <GitHubMark className="size-5" />
-              Sign in with GitHub
-            </Button>
+            <form action={signIn}>
+              <Button size="xl" type="submit">
+                <GitHubMark className="size-5" />
+                Sign in with GitHub
+              </Button>
+            </form>
             <Button
               size="xl"
               variant="outline"
