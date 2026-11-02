@@ -17,6 +17,10 @@ ENV NODE_ENV=production \
 COPY --from=build --chown=bun:bun /app/.next/standalone ./
 COPY --from=build --chown=bun:bun /app/.next/static ./.next/static
 COPY --from=build --chown=bun:bun /app/public ./public
+# First-run setup writes the GitHub App credentials here. Group 10000 is the
+# API and worker user, which mount the same volume read-only. The setgid bit
+# gives new files that group.
+RUN install -d -o bun -g 10000 -m 2750 /config
 USER bun
 EXPOSE 3000
 CMD ["bun", "server.js"]

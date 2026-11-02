@@ -1,10 +1,23 @@
 import "server-only";
+import { readStoredConfig } from "./config";
 
 export type Env = ReturnType<typeof getEnv>;
 
+/** Values written by first-run setup, used when the variable is unset. */
+const stored = {
+  GITHUB_CLIENT_ID: "client_id",
+  GITHUB_CLIENT_SECRET: "client_secret",
+  GITHUB_APP_SLUG: "slug",
+  BETTER_AUTH_SECRET: "auth_secret",
+  BETTER_AUTH_URL: "url",
+} as const;
+
 export function getEnv() {
+  const config = readStoredConfig();
   function required(name: string) {
-    const value = process.env[name];
+    let value = process.env[name];
+    if (!value?.trim() && config && name in stored)
+      value = config[stored[name as keyof typeof stored]];
     if (!value?.trim())
       throw new Error(`Missing environment variable: ${name}`);
     return value;

@@ -1,5 +1,11 @@
 # GitHub App setup
 
+The dashboard can create the app for you. See the [quick start](../README.md#quick-start).
+It uses GitHub's [manifest flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest)
+with the same settings as the manual steps below.
+GitHub has no API for app logos. Upload `web/public/crocode-app-logo.png` on the app settings page.
+Use the manual steps when you configure an existing app or keep secrets in environment variables.
+
 Use one GitHub App for webhook delivery, repository access, and dashboard user access.
 The worker creates a separate installation token for each repository review.
 It requests only `contents: read` and `pull_requests: write` for that token.

@@ -85,13 +85,25 @@ impl Settings {
     }
 
     pub fn from_env() -> Result<Self> {
-        // Empty counts as unset, like every optional variable, because
-        // Compose passes `${VAR:-}` as an empty string.
-        let github_private_key = match optional("GITHUB_PRIVATE_KEY_PATH") {
-            Some(path) => std::fs::read(&path).with_context(|| format!("read {path}"))?,
-            None => required("GITHUB_PRIVATE_KEY")?
-                .replace("\\n", "\n")
-                .into_bytes(),
+        let (github_app_id, github_private_key, webhook_secret) = match stored_app_file() {
+            Some(path) => {
+                let app = read_stored_app(&path)?;
+                (app.id, app.pem.into_bytes(), app.webhook_secret)
+            }
+            None => (
+                required("GITHUB_APP_ID")?
+                    .parse()
+                    .context("GITHUB_APP_ID")?,
+                // Empty counts as unset, like every optional variable,
+                // because Compose passes `${VAR:-}` as an empty string.
+                match optional("GITHUB_PRIVATE_KEY_PATH") {
+                    Some(path) => std::fs::read(&path).with_context(|| format!("read {path}"))?,
+                    None => required("GITHUB_PRIVATE_KEY")?
+                        .replace("\\n", "\n")
+                        .into_bytes(),
+                },
+                required("GITHUB_WEBHOOK_SECRET")?,
+            ),
         };
         let agents = optional("CROCODE_AGENTS")
             .unwrap_or_else(|| "claude,codex,opencode".into())
@@ -109,7 +121,6 @@ impl Settings {
             Some("none") => SandboxMode::None,
             Some(other) => bail!("CROCODE_SANDBOX must be docker or none, got {other:?}"),
         };
-        let webhook_secret = required("GITHUB_WEBHOOK_SECRET")?;
         if webhook_secret.len() < 16 {
             bail!("GITHUB_WEBHOOK_SECRET must be at least 16 characters");
         }
@@ -117,9 +128,7 @@ impl Settings {
         Ok(Self {
             database_url: required("DATABASE_URL")?,
             bind: optional("CROCODE_BIND").unwrap_or_else(|| "0.0.0.0:8080".into()),
-            github_app_id: required("GITHUB_APP_ID")?
-                .parse()
-                .context("GITHUB_APP_ID")?,
+            github_app_id,
             github_private_key,
             github_webhook_secret: webhook_secret.into_bytes(),
             github_api_url: optional("GITHUB_API_URL")
@@ -154,6 +163,54 @@ impl Settings {
     }
 }
 
+/// GitHub App credentials that the dashboard writes during first-run setup.
+#[derive(serde::Deserialize)]
+struct StoredApp {
+    id: u64,
+    pem: String,
+    webhook_secret: String,
+}
+
+const STORED_APP_FILE: &str = "github-app.json";
+
+/// The stored app file applies only when `GITHUB_APP_ID` is unset, so
+/// environment variables always take precedence.
+fn stored_app_file() -> Option<PathBuf> {
+    if optional("GITHUB_APP_ID").is_some() {
+        return None;
+    }
+    optional("CROCODE_CONFIG_DIR").map(|dir| PathBuf::from(dir).join(STORED_APP_FILE))
+}
+
+fn read_stored_app(path: &std::path::Path) -> Result<StoredApp> {
+    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
+}
+
+/// Waits until first-run setup writes the GitHub App file. Returns false if
+/// `stop` resolves first. Without a config directory it returns at once.
+pub async fn wait_for_github_app(stop: impl std::future::Future<Output = ()>) -> bool {
+    let Some(path) = stored_app_file() else {
+        return true;
+    };
+    tokio::pin!(stop);
+    let mut logged = false;
+    while !path.exists() {
+        if !logged {
+            tracing::info!(
+                path = %path.display(),
+                "waiting for GitHub App setup; open /setup on the dashboard"
+            );
+            logged = true;
+        }
+        tokio::select! {
+            () = &mut stop => return false,
+            () = tokio::time::sleep(Duration::from_secs(3)) => {}
+        }
+    }
+    true
+}
+
 fn optional(name: &str) -> Option<String> {
     env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
@@ -167,4 +224,28 @@ fn number(name: &str, default: u64) -> Result<u64> {
         v.parse()
             .with_context(|| format!("{name} must be a number"))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_stored_app_and_ignores_extra_fields() {
+        let dir = std::env::temp_dir().join(format!("crocode-settings-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(STORED_APP_FILE);
+        std::fs::write(
+            &path,
+            r#"{"id":42,"pem":"key","webhook_secret":"0123456789abcdef","client_secret":"x"}"#,
+        )
+        .unwrap();
+        let app = read_stored_app(&path).unwrap();
+        assert_eq!(app.id, 42);
+        assert_eq!(app.pem, "key");
+        assert_eq!(app.webhook_secret, "0123456789abcdef");
+        std::fs::write(&path, r#"{"id":"42"}"#).unwrap();
+        assert!(read_stored_app(&path).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

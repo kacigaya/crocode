@@ -50,6 +50,9 @@ async fn main() -> Result<()> {
         _ => bail!("{USAGE}"),
     };
 
+    if !settings::wait_for_github_app(wait_for_signal()).await {
+        return Ok(());
+    }
     let settings = Arc::new(settings::Settings::from_env()?);
     info!(?settings, "starting crocode {mode}");
     let state = AppState {

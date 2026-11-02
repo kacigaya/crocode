@@ -22,10 +22,11 @@ If you add a variable to the `api` service, add it to `docker-compose.yml` too.
 | --- | --- | --- |
 | `DATABASE_URL` | Required | Postgres connection URL. The server applies migrations at startup. |
 | `CROCODE_BIND` | `0.0.0.0:8080` | API listen address. |
-| `GITHUB_APP_ID` | Required | Numeric GitHub App ID. |
+| `CROCODE_CONFIG_DIR` | Unset | Directory with `github-app.json` from dashboard setup. Compose sets `/config`. Used only when `GITHUB_APP_ID` is empty. Until the file exists, the API and worker wait. |
+| `GITHUB_APP_ID` | Required without setup | Numeric GitHub App ID. When set, the GitHub variables below take precedence over `CROCODE_CONFIG_DIR`. |
 | `GITHUB_PRIVATE_KEY_PATH` | Unset | Path to a PEM file. Takes priority over the inline key. Unset it when you use the inline key. |
-| `GITHUB_PRIVATE_KEY` | Required without a key path | PEM private key. Literal `\n` becomes a line break. |
-| `GITHUB_WEBHOOK_SECRET` | Required | Webhook HMAC secret, at least 16 bytes. Use random ASCII text. |
+| `GITHUB_PRIVATE_KEY` | Required with `GITHUB_APP_ID` and no key path | PEM private key. Literal `\n` becomes a line break. |
+| `GITHUB_WEBHOOK_SECRET` | Required with `GITHUB_APP_ID` | Webhook HMAC secret, at least 16 bytes. Use random ASCII text. |
 | `GITHUB_API_URL` | `https://api.github.com` | GitHub REST API base URL. Use the API URL for your GitHub Enterprise host if needed. |
 | `GITHUB_WEB_URL` | `https://github.com` | Git host used to fetch repository PR heads. Trailing slashes are removed. |
 | `CROCODE_AGENTS` | `claude,codex,opencode` | Comma-separated enabled agents. |
@@ -60,9 +61,16 @@ Alternative providers can need more credentials in `CROCODE_AGENT_ENV`.
 
 | Agent | Automatic environment variables |
 | --- | --- |
-| Claude | `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX` |
+| Claude | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX` |
 | Codex | `CODEX_API_KEY`, `OPENAI_BASE_URL` |
 | OpenCode | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_API_KEY` |
+
+To use a Claude subscription instead of an API key:
+
+1. Run `claude setup-token` and copy the token.
+2. Set `CLAUDE_CODE_OAUTH_TOKEN` to the token. Leave `ANTHROPIC_API_KEY` empty.
+
+An API key takes precedence. Reviews then count against the subscription usage limits.
 
 Never add GitHub tokens, app keys, database URLs, OAuth secrets, or session secrets to `CROCODE_AGENT_ENV`.
 The agent must be able to use its model key. A read-only filesystem does not hide environment variables from it.

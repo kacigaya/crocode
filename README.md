@@ -78,30 +78,38 @@ cd crocode
 cp .env.example .env && chmod 600 .env
 ```
 
-1. [Register a GitHub App](docs/github-app.md). Put its ID, private key, and webhook secret in `.env`.
-2. Set a database password and the API key for your agent in `.env`.
-3. Set `DOCKER_GID` to the output of `stat -c '%g' /var/run/docker.sock`.
-4. Create the work directory. The host path and the worker path must match.
+1. Set a database password and your agent credentials in `.env`.
+   For Claude, use an API key or a subscription token from `claude setup-token`.
+   Leave the GitHub App values empty. The dashboard creates the app.
+2. Set `DOCKER_GID` to the output of `stat -c '%g' /var/run/docker.sock`.
+3. Create the work directory. The host path and the worker path must match.
 
    ```bash
    sudo install -d -m 0755 -o 10000 -g 10000 /var/lib/crocode/work
    ```
 
-5. Build the sandbox image and start the backend.
+4. Build the sandbox image and start everything.
 
    ```bash
    sudo docker build -t crocode-sandbox:latest docker/sandbox
-   sudo docker compose up -d --build postgres api worker
-   curl --fail http://localhost:8080/healthz
-   ```
-
-6. Put an HTTPS reverse proxy in front of port 8080. Point the app webhook at `/webhooks/github`.
-7. Copy `web/.env.example` to `web/.env`. Set the app's OAuth client, slug, `BETTER_AUTH_SECRET`, and `BETTER_AUTH_URL`.
-   Then start the dashboard on port 3000.
-
-   ```bash
    sudo docker compose --profile dashboard up -d --build
    ```
+
+5. Put an HTTPS reverse proxy in front of the stack.
+   Route `/webhooks/github` to the API on port 8080.
+   Route everything else to the dashboard on port 3000.
+6. Get the setup link from the dashboard logs.
+
+   ```bash
+   sudo docker compose logs web | grep setup
+   ```
+
+7. Open the link on your public address. Confirm the address and the app name, then click **Create the GitHub App**.
+   GitHub asks you to confirm. CroCode saves the credentials, and the API and worker start on their own.
+8. Follow the steps on the done page: install the app, upload the logo, and sign in.
+
+To configure the app by hand instead, see [GitHub App setup](docs/github-app.md).
+Environment variables always take precedence over the stored app.
 
 ## Repository config
 
@@ -124,7 +132,7 @@ See [all fields and defaults](docs/configuration.md).
 
 | Agent | Read-only mode | Credentials |
 |---|---|---|
-| Claude Code | `--bare --restricted`, tools `Read,Grep,Glob` only | `ANTHROPIC_API_KEY` |
+| Claude Code | `--bare --restricted`, tools `Read,Grep,Glob` only | `ANTHROPIC_API_KEY`, or a subscription token in `CLAUDE_CODE_OAUTH_TOKEN` |
 | OpenCode | Every permission denied except read, glob, and grep | Provider key, for example `OPENROUTER_API_KEY` |
 | Codex | `--sandbox read-only` | `CODEX_API_KEY` |
 

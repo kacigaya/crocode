@@ -16,6 +16,26 @@ Use Bun 1.3.14. All dashboard files are in `web/`.
 Environment values are checked on first use. Builds do not need secrets.
 The dashboard does not use `NEXT_PUBLIC_` variables.
 
+## First-run setup
+
+With `CROCODE_CONFIG_DIR` set and no `GITHUB_CLIENT_ID`, the dashboard serves `/setup`.
+At startup it writes a random token to `setup-token` in that directory and prints the setup link.
+The setup form requires this token, so only the operator can claim the instance.
+
+1. The form checks the token, the public address, and the app name.
+2. The browser posts a GitHub App manifest to GitHub. The manifest `state` holds an HMAC keyed by the token.
+3. GitHub sends the browser to `/setup/callback`. The dashboard checks the state and exchanges the one-time code.
+4. The dashboard writes `github-app.json` with mode 0640 and deletes the token.
+
+The file holds the app ID, private key, webhook secret, OAuth client, and a generated
+`BETTER_AUTH_SECRET`. The API and worker mount the volume read-only and read it
+through group 10000. They cannot read the setup token.
+After setup, `/setup` redirects to the done page and the callback returns 409.
+Environment variables take precedence over every stored value.
+
+The dashboard container can write to this volume, so it holds the GitHub App private key.
+To keep the private key out of the dashboard, configure the app by hand with environment variables.
+
 ## Sessions and requests
 
 [Better Auth](https://better-auth.com) runs GitHub sign-in in stateless mode.
