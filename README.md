@@ -12,7 +12,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/kacigaya/crocode/actions/workflows/ci.yml"><img alt="CI status" src="https://shieldcn.dev/github/ci/kacigaya/crocode.svg?workflow=ci.yml&amp;variant=secondary"></a>
   <a href="https://www.rust-lang.org/"><img alt="Rust 1.88 or newer" src="https://shieldcn.dev/badge/Rust-1.88%2B-dea584.svg?variant=secondary&amp;logo=rust"></a>
   <a href="https://nextjs.org/"><img alt="Next.js 16" src="https://shieldcn.dev/badge/Next.js-16-000000.svg?variant=secondary&amp;logo=nextdotjs"></a>
   <a href="docker-compose.yml"><img alt="Docker Compose for ARM64 and AMD64" src="https://shieldcn.dev/badge/Docker_Compose-ARM64_%7C_AMD64-2496ed.svg?variant=secondary&amp;logo=docker"></a>
