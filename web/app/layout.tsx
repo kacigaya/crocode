@@ -1,8 +1,14 @@
 import type { Metadata } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+// next/font downloads the files at build time and serves them from this app,
+// so browsers never contact Google.
+const sans = Geist({ subsets: ["latin"], variable: "--font-geist-sans" });
+const mono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono" });
 
 export const metadata: Metadata = {
   title: { default: "Crocode", template: "%s · Crocode" },
@@ -18,12 +24,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
       <body className="min-h-dvh bg-background font-sans text-foreground antialiased">
         {children}
-        <footer className="mx-auto max-w-6xl px-6 py-8 text-xs text-muted-foreground">
-          Crocode · Self-hosted GitHub code review · Apache 2.0
-        </footer>
       </body>
     </html>
   );

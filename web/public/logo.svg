@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="22 70 212 154" role="img" aria-labelledby="t"><title id="t">Crocode</title>
+  <g fill="none" stroke="#34d399" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M34 154H222" stroke-width="10"/>
+    <path d="M56 154C58 132 68 117 83 111C87 85 125 81 131 106C152 112 174 116 191 120C195 101 216 101 218 122C221 131 221 143 222 154" stroke-width="10"/>
+    <path d="M148 149l6-11 6 11 6-11 6 11 6-11 6 11" stroke-width="6"/>
+    <path d="M44 186H92M112 186H176M68 212H140M160 212H200" stroke-width="10"/>
+  </g>
+  <g fill="#34d399">
+    <path fill-rule="evenodd" d="M95 119a10 10 0 1 0 20 0a10 10 0 1 0-20 0ZM105 110a2 2 0 0 1 2 2v14a2 2 0 0 1-4 0v-14a2 2 0 0 1 2-2Z"/>
+  </g>
+</svg>
