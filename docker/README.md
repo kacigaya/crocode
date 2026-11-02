@@ -114,3 +114,21 @@ The same plugin probe did not execute with those controls.
 
 Local AMD64 builds were not possible because this ARM64 host has no AMD64 emulator.
 [CI passed both image builds](https://github.com/kacigaya/crocode/actions/runs/41360371611) on native AMD64 and ARM64 runners without pushing images.
+
+## Database role checks
+
+The Postgres bootstrap script creates a separate runtime login.
+The `migrate` service applies schema changes before runtime services start.
+Existing volumes need the [database upgrade steps](../docs/configuration.md#database-setup-and-upgrades).
+Do not remove a database volume to apply these changes.
+
+After migration, run the permission test against a disposable Postgres container:
+
+```sh
+sudo docker exec -i YOUR_TEST_POSTGRES_CONTAINER \
+  psql -U YOUR_TEST_DATABASE_OWNER -d YOUR_TEST_DATABASE \
+  < docker/postgres/tests/runtime.sql
+```
+
+The test checks data access, rejects table creation and table changes, and checks that migration history is inaccessible.
+It rolls back its data changes.

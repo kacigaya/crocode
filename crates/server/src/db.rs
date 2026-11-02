@@ -16,8 +16,37 @@ pub async fn connect(url: &str) -> anyhow::Result<Db> {
         .acquire_timeout(Duration::from_secs(10))
         .connect(url)
         .await?;
-    sqlx::migrate!("../../migrations").run(&pool).await?;
+    let privileged: bool = sqlx::query_scalar(
+        "SELECT rolsuper OR rolcreatedb OR rolcreaterole OR rolbypassrls
+         FROM pg_roles WHERE rolname = current_user",
+    )
+    .fetch_one(&pool)
+    .await?;
+    anyhow::ensure!(
+        !privileged,
+        "DATABASE_URL must use a restricted runtime role; run crocode migrate separately"
+    );
     Ok(pool)
+}
+
+pub async fn migrate(url: &str) -> anyhow::Result<()> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(url)
+        .await?;
+    sqlx::migrate!("../../migrations").run(&pool).await?;
+    // The runtime role must not be able to change migration history.
+    sqlx::query(
+        "DO $$ BEGIN
+         IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'crocode_runtime') THEN
+             REVOKE ALL ON _sqlx_migrations FROM crocode_runtime;
+         END IF;
+         END $$",
+    )
+    .execute(&pool)
+    .await?;
+    pool.close().await;
+    Ok(())
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -271,6 +300,19 @@ pub async fn prune_deliveries(db: &Db) -> sqlx::Result<()> {
         .execute(db)
         .await?;
     Ok(())
+}
+
+pub async fn prune_reviews(db: &Db) -> sqlx::Result<u64> {
+    // Keep active jobs. Child findings and patches are removed by foreign keys.
+    let result = sqlx::query(
+        "DELETE FROM reviews r
+         WHERE EXISTS (SELECT FROM installations i WHERE i.id = r.installation_id AND i.deleted)
+            OR (r.status NOT IN ('queued', 'running')
+                AND COALESCE(r.finished_at, r.created_at) < now() - interval '30 days')",
+    )
+    .execute(db)
+    .await?;
+    Ok(result.rows_affected())
 }
 
 pub struct Finish<'a> {

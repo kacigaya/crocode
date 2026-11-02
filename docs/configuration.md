@@ -7,10 +7,11 @@ It does not load `.env` when you run the binary directly.
 Compose reads that file for `${...}` interpolation.
 Each service gets only the variables it reads:
 
-1. `postgres` gets the three `POSTGRES_*` variables.
+1. `postgres` gets the `POSTGRES_*` variables and `CROCODE_DB_PASSWORD` for account setup.
 2. `api` gets the database, GitHub App, agent list, and log variables. It gets no agent credentials.
-3. `worker` loads the whole `.env` through `env_file`. It passes only named variables into sandbox containers.
+3. `worker` loads `.env` through `env_file`, but Compose clears the database setup credentials. It passes only named variables into sandbox containers.
 4. `web` loads `web/.env` through `env_file`. Compose sets `CROCODE_API_URL=http://api:8080`.
+5. `migrate` receives only `MIGRATION_DATABASE_URL`. It needs no GitHub credentials.
 
 Keep the dashboard secrets in `web/.env`, not in `.env`.
 Copy [web/.env.example](../web/.env.example) to start.
@@ -20,7 +21,8 @@ If you add a variable to the `api` service, add it to `docker-compose.yml` too.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `DATABASE_URL` | Required | Postgres connection URL. The server applies migrations at startup. |
+| `DATABASE_URL` | Required | Postgres connection URL for a restricted runtime role. Startup rejects superuser, database-creation, role-creation, and RLS-bypass privileges. |
+| `MIGRATION_DATABASE_URL` | Required for `crocode migrate` only | Separate database setup URL. Never pass it to the API, worker, or sandbox. |
 | `CROCODE_BIND` | `0.0.0.0:8080` | API listen address. |
 | `CROCODE_CONFIG_DIR` | Unset | Directory with `github-app.json` from dashboard setup. Compose sets `/config`. Used only when `GITHUB_APP_ID` is empty. Until the file exists, the API and worker wait. |
 | `GITHUB_APP_ID` | Required without setup | Numeric GitHub App ID. When set, the GitHub variables below take precedence over `CROCODE_CONFIG_DIR`. |
@@ -155,8 +157,9 @@ The tools do not give agents shell, write, or arbitrary URL access.
 
 | Variable | Example or default | Meaning |
 | --- | --- | --- |
-| `POSTGRES_USER` | Example: `crocode` | Initial database user. |
-| `POSTGRES_PASSWORD` | Required replacement | Initial database password. Keep it consistent with `DATABASE_URL`. |
+| `POSTGRES_USER` | Example: `crocode` | Initial database administrator. |
+| `POSTGRES_PASSWORD` | Required replacement | Initial administrator password. Keep it consistent with `MIGRATION_DATABASE_URL`. |
+| `CROCODE_DB_PASSWORD` | Required replacement | Separate password for `crocode_runtime`. Keep it consistent with `DATABASE_URL`. |
 | `POSTGRES_DB` | Example: `crocode` | Initial database name. |
 | `DOCKER_GID` | `0` | Docker socket's host group ID. Read it with `stat -c '%g' /var/run/docker.sock`. |
 | `CROCODE_WORK_DIR` | `/var/lib/crocode/work` | Same absolute bind path on host and worker. Create it with owner `10000:10000`. |
@@ -165,6 +168,45 @@ The `postgres-data` named volume holds database files.
 Postgres initialization variables do not change the password or user in an existing data volume.
 The `web` service uses the `dashboard` profile.
 Set its variables in `web/.env`. See [dashboard setup](dashboard.md).
+
+The worker removes completed reviews after 30 days and deleted installations’ reviews on its next cleanup pass.
+Cleanup runs once per minute. It also removes findings and stored patches.
+Backups and GitHub reviews are outside this policy.
+
+## Database setup and upgrades
+
+Compose runs `crocode migrate` before the API and worker start.
+The migration service receives the setup URL. Runtime services receive only the runtime URL.
+New Postgres volumes create `crocode_runtime` with data access and no schema ownership.
+The migration ledger is not accessible to that role.
+
+For a direct binary run:
+
+1. Set `MIGRATION_DATABASE_URL` in the migration process.
+2. Run `crocode migrate`.
+3. Set `DATABASE_URL` to the restricted account in the API and worker processes.
+4. Start the API and worker without the setup URL in their environment.
+
+Existing volumes require a one-time account setup. Do not delete the volume.
+Take a backup before you change the deployment.
+
+1. Keep the existing `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB` values.
+2. Add `CROCODE_DB_PASSWORD` and `MIGRATION_DATABASE_URL` to `.env`.
+3. Keep the old `DATABASE_URL` until the next step completes.
+4. Recreate only the Postgres container to load the new environment and script mount. This preserves the volume. Run the role setup script as the existing database owner:
+
+   ```sh
+   sudo docker compose up -d --no-deps postgres
+   sudo docker compose exec -T postgres sh /docker-entrypoint-initdb.d/init-runtime.sh
+   ```
+
+5. Set `DATABASE_URL` to the `crocode_runtime` URL.
+6. Rebuild and start the services with `sudo docker compose up -d --build migrate api worker`.
+
+Run the role setup script once. It fails if the runtime role already exists.
+For externally managed Postgres, create a separate login role and grant schema usage and data access on the application tables.
+Do not grant access to `_sqlx_migrations` or ownership of application tables.
+The bootstrap script and migration command must use the same database owner so default grants apply to new tables.
 
 ## Repository config
 
