@@ -148,7 +148,7 @@ impl GitHub {
         })
     }
 
-    /// Mints a token limited to one repository and the permissions Crocode needs.
+    /// Mints a token limited to one repository and the permissions CroCode needs.
     pub async fn repo_client(
         &self,
         installation_id: i64,

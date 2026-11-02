@@ -1,4 +1,4 @@
-//! Pure review logic for Crocode. This crate does no I/O.
+//! Pure review logic for CroCode. This crate does no I/O.
 
 pub mod config;
 pub mod diff;

@@ -22,7 +22,7 @@ const features = [
   {
     icon: FileSearch,
     title: "Checked findings",
-    body: "Crocode drops findings outside the diff, removes duplicates, and posts inline comments with suggested fixes.",
+    body: "CroCode drops findings outside the diff, removes duplicates, and posts inline comments with suggested fixes.",
   },
   {
     icon: Server,
@@ -58,7 +58,7 @@ export default async function Home({
             AI code review on your own servers
           </h1>
           <p className="mx-auto mt-5 max-w-2xl text-pretty text-lg text-muted-foreground">
-            Crocode reviews GitHub pull requests with the agent you choose.
+            CroCode reviews GitHub pull requests with the agent you choose.
             Manage installations, set review defaults, and read every finding
             from one dashboard.
           </p>
@@ -100,7 +100,7 @@ export default async function Home({
         </section>
       </main>
       <footer className="mx-auto max-w-5xl border-t px-6 py-8 text-xs text-muted-foreground">
-        Crocode · Self-hosted GitHub code review · Apache 2.0
+        CroCode · Self-hosted GitHub code review · Apache 2.0
       </footer>
     </>
   );

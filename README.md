@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/kacigaya/crocode/main/assets/crocode-logo.svg" alt="Crocode logo" width="200">
+  <img src="https://raw.githubusercontent.com/kacigaya/crocode/main/assets/crocode-logo.svg" alt="CroCode logo" width="200">
 </p>
 
-<h1 align="center">Crocode</h1>
+<h1 align="center">CroCode</h1>
 
 <p align="center">
-  <strong>Self-hostable AI code review for GitHub. Crocode runs Claude Code,
+  <strong>Self-hostable AI code review for GitHub. CroCode runs Claude Code,
   Codex, or OpenCode in a read-only container, checks every finding against
   the diff, and posts inline review comments with severity and suggested
   fixes.</strong>
@@ -19,7 +19,7 @@
 </p>
 
 > [!NOTE]
-> Crocode is in development. No release is published yet.
+> CroCode is in development. No release is published yet.
 
 ## How it works
 
@@ -38,8 +38,8 @@ flowchart LR
 2. A worker claims the job and mints a token for that one repository.
 3. The worker reads `.crocode.yml` from the base commit, not from the pull request.
 4. The agent reviews the diff in a container with a read-only checkout and no GitHub token.
-5. Crocode drops findings outside the diff, removes duplicates, and redacts secrets.
-6. Crocode posts one `COMMENT` review. It never approves or blocks a pull request.
+5. CroCode drops findings outside the diff, removes duplicates, and redacts secrets.
+6. CroCode posts one `COMMENT` review. It never approves or blocks a pull request.
 
 A new push cancels the old review. A commit that already has a review is not reviewed again.
 
@@ -52,7 +52,7 @@ suggested fix. The screenshots use demo data.
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/login-dark.png">
-    <img alt="Crocode sign-in page" src="assets/screenshots/login-light.png" width="49%">
+    <img alt="CroCode sign-in page" src="assets/screenshots/login-light.png" width="49%">
   </picture>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/installation-dark.png">
@@ -70,7 +70,7 @@ suggested fix. The screenshots use demo data.
 ## Quickstart
 
 You need a Linux host with Docker Compose. The worker starts sandbox containers
-through the Docker socket, so give Crocode a dedicated host.
+through the Docker socket, so give CroCode a dedicated host.
 
 ```bash
 git clone https://github.com/kacigaya/crocode.git
@@ -156,7 +156,7 @@ The dashboard lives in `web/` and uses Bun: `bun install`, `bun run lint`,
 
 ## Security
 
-Crocode treats all pull request content as hostile. Agents get read-only tools,
+CroCode treats all pull request content as hostile. Agents get read-only tools,
 credentials stay out of the sandbox, and published text is escaped so it
 cannot ping users or load images. Sandbox network egress is open by default.
 Read the [security model](docs/security.md) before you review untrusted code.

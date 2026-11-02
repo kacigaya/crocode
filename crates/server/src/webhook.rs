@@ -203,7 +203,7 @@ async fn on_pull_request(state: &AppState, body: &[u8]) -> anyhow::Result<&'stat
         _ => return Ok("ignored action"),
     }
     // The repository owner is the installation account. This covers apps
-    // installed before Crocode saw the installation event.
+    // installed before CroCode saw the installation event.
     let known = db::installation(&state.db, installation.id).await?;
     if known.is_none() {
         upsert(state, installation, Some(&e.repository.owner)).await?;

@@ -1,6 +1,6 @@
 [package]
 name = "crocode-server"
-description = "Crocode API, webhook receiver, and review worker."
+description = "CroCode API, webhook receiver, and review worker."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,4 +1,4 @@
-//! Crocode server binary.
+//! CroCode server binary.
 //!
 //! `crocode api` serves webhooks and the REST API. `crocode worker` runs
 //! reviews. `crocode all` runs both in one process.

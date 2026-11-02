@@ -26,7 +26,7 @@ const errors: Record<string, string> = {
   model: "Enter a model, or leave the field empty.",
   validation:
     "The API did not accept these settings. Check the agent and model.",
-  api: "Cannot save settings. Check that the Crocode API is available, then try again.",
+  api: "Cannot save settings. Check that the CroCode API is available, then try again.",
 };
 
 export default async function InstallationPage({

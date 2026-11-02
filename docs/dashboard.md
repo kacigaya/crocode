@@ -1,4 +1,4 @@
-# Crocode dashboard
+# CroCode dashboard
 
 The dashboard uses Next.js 16.4.3, React 19.3.1, Tailwind CSS 4, and Coss UI.
 Use Bun 1.3.14. All dashboard files are in `web/`.

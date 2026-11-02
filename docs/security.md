@@ -3,11 +3,11 @@
 Treat the PR author, PR text, changed code, repository files, and agent output as untrusted.
 Treat the host operator, GitHub App key, base-branch config, database, and Docker daemon as trusted.
 The model provider receives code and review context.
-Self-hosting Crocode does not keep that data away from the chosen provider.
+Self-hosting CroCode does not keep that data away from the chosen provider.
 
 ## Prompt injection and startup code
 
-Crocode wraps PR text and diffs in a fresh random boundary.
+CroCode wraps PR text and diffs in a fresh random boundary.
 The prompt tells the agent to treat repository content as data.
 The boundary makes a guessed closing tag harder to inject.
 It does not prove that a model will ignore malicious instructions.
@@ -39,7 +39,7 @@ A multiline range must stay inside one hunk.
 Other valid findings move to the review summary.
 Suggestions need an inline range.
 
-Crocode escapes HTML, disables Markdown images, removes control characters, and breaks mentions in agent prose.
+CroCode escapes HTML, disables Markdown images, removes control characters, and breaks mentions in agent prose.
 It limits summaries, titles, bodies, suggestions, and the number of findings.
 Suggestion code stays inside a fence longer than any backtick run in that code.
 Images matter because a URL can encode private code and cause a remote fetch.
@@ -133,7 +133,7 @@ A worker exploit can start a container with host mounts or other privileges.
 Running the worker as uid 10000 does not remove this risk.
 See Docker's [daemon security model](https://docs.docker.com/engine/security/#docker-daemon-attack-surface).
 
-1. Use a dedicated host or Docker daemon for Crocode reviews.
+1. Use a dedicated host or Docker daemon for CroCode reviews.
 2. Give socket access only to the worker service.
 3. Keep host credentials and unrelated application data off that host.
 4. Keep the kernel, Docker, and agent images updated.

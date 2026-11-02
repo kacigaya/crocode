@@ -8,7 +8,7 @@ export function Brand({ href }: { href: string }) {
       className="inline-flex items-center gap-2.5 rounded-md text-[0.9375rem] font-semibold"
     >
       <Image src="/logo.svg" alt="" width={28} height={20} priority />
-      Crocode
+      CroCode
     </Link>
   );
 }

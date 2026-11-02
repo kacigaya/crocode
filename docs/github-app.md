@@ -40,7 +40,7 @@ These steps follow the official [app registration guide](https://docs.github.com
    ```
 
 6. Put the same secret in GitHub's **Webhook secret** field and `.env` as `GITHUB_WEBHOOK_SECRET`.
-   Crocode requires at least 16 bytes. The command above gives 64 ASCII characters.
+   CroCode requires at least 16 bytes. The command above gives 64 ASCII characters.
    Keep **SSL verification** enabled.
    See GitHub's [webhook signature guide](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries).
 
@@ -59,7 +59,7 @@ These steps follow the official [app registration guide](https://docs.github.com
    A failed admin check denies settings changes.
 
 9. Subscribe to **Pull request** events.
-   Crocode also handles **Installation** and **Installation repositories** events.
+   CroCode also handles **Installation** and **Installation repositories** events.
    GitHub sends those installation events to apps by default.
    See the [event reference](https://docs.github.com/en/webhooks/webhook-events-and-payloads#installation).
    No Push or Workflow permission is needed.
@@ -82,7 +82,7 @@ These steps follow the official [app registration guide](https://docs.github.com
     Never commit the key or mount it into the sandbox.
 
 13. Install the app on selected repositories.
-    Start Crocode with the [Compose quick start](../README.md#quick-start).
+    Start CroCode with the [Compose quick start](../README.md#quick-start).
     Check the app's webhook delivery view.
     A signed ping returns `202` with `pong`.
     Open a small PR and check that the worker claims its queued review.

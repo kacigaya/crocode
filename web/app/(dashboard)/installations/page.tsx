@@ -30,7 +30,7 @@ export default async function InstallationsPage() {
     <>
       <PageHeader
         title="Installations"
-        description="GitHub accounts that you can access on this Crocode server."
+        description="GitHub accounts that you can access on this CroCode server."
         actions={installations.length > 0 ? install : undefined}
       />
       {installations.length === 0 ? (

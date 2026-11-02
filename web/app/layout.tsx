@@ -11,7 +11,7 @@ const sans = Geist({ subsets: ["latin"], variable: "--font-geist-sans" });
 const mono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono" });
 
 export const metadata: Metadata = {
-  title: { default: "Crocode", template: "%s · Crocode" },
+  title: { default: "CroCode", template: "%s · CroCode" },
   description:
     "Self-hosted AI code review for GitHub. Open source under Apache 2.0.",
   robots: { index: false, follow: false },

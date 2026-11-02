@@ -1,6 +1,6 @@
 //! Repository configuration loaded from `.crocode.yml`.
 //!
-//! Crocode reads this file from the pull request base commit, never from the
+//! CroCode reads this file from the pull request base commit, never from the
 //! head. A pull request must not be able to change how it gets reviewed.
 
 use globset::{Glob, GlobSet, GlobSetBuilder};

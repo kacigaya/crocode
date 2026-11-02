@@ -10,8 +10,8 @@ export class ApiError extends Error {
             : status === 422
               ? "The API did not accept these settings. Check the agent and model."
               : status === 0
-                ? "Cannot connect to the Crocode API. Try again."
-                : "The Crocode API could not complete this request. Try again.",
+                ? "Cannot connect to the CroCode API. Try again."
+                : "The CroCode API could not complete this request. Try again.",
     );
     this.name = "ApiError";
   }

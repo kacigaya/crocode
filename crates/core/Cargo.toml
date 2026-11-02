@@ -1,6 +1,6 @@
 [package]
 name = "crocode-core"
-description = "Pure review logic for Crocode: config, diffs, findings, prompts."
+description = "Pure review logic for CroCode: config, diffs, findings, prompts."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

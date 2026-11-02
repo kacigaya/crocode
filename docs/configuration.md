@@ -68,7 +68,7 @@ Never add GitHub tokens, app keys, database URLs, OAuth secrets, or session secr
 The agent must be able to use its model key. A read-only filesystem does not hide environment variables from it.
 Do not mount your personal CLI home directory into a sandbox.
 
-Crocode sets `HOME=/home/agent` inside Docker.
+CroCode sets `HOME=/home/agent` inside Docker.
 It supplies the fixed OpenCode permission config through `OPENCODE_CONFIG_CONTENT`.
 It disables project config, Claude config, and external skills for OpenCode.
 It uses `--pure` to block external plugins.
@@ -92,7 +92,7 @@ Set its variables in `web/.env`. See [dashboard setup](dashboard.md).
 
 ## Repository config
 
-Crocode reads `.crocode.yml` from the PR base commit, not the head checkout.
+CroCode reads `.crocode.yml` from the PR base commit, not the head checkout.
 An absent or blank file uses the defaults.
 Unknown fields, bad YAML, and bad ignore patterns fail the review without a retry.
 
@@ -107,7 +107,7 @@ Unknown fields, bad YAML, and bad ignore patterns fail the review without a retr
 | `max_files` | `100` | Maximum changed files before ignore filtering. Includes removed files and files without patches. |
 | `max_changed_lines` | `3000` | Maximum added plus deleted lines across reviewed files after filtering. |
 | `ignore` | `[]` | Extra glob patterns. Adds to the default ignores. |
-| `instructions` | `null` | Maintainer review guidance. Crocode keeps the first 4,000 characters. It cannot change the output format or safety rules. |
+| `instructions` | `null` | Maintainer review guidance. CroCode keeps the first 4,000 characters. It cannot change the output format or safety rules. |
 
 Repository agent selection takes priority over installation settings, then the server default.
 An explicit repository agent also resets the installation model.

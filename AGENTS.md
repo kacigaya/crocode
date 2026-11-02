@@ -1,4 +1,4 @@
-# Crocode project guide
+# CroCode project guide
 
 ## Layout
 

@@ -400,7 +400,7 @@ pub fn review_body(
     head_sha: &str,
     all_in_body: bool,
 ) -> String {
-    let mut body = String::from("### Crocode review\n\n");
+    let mut body = String::from("### CroCode review\n\n");
     if !summary.trim().is_empty() {
         body.push_str(summary.trim());
         body.push_str("\n\n");

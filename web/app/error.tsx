@@ -17,7 +17,7 @@ export default function ErrorPage({
     >
       <h1 className="text-2xl font-semibold">Cannot load this page</h1>
       <p className="text-sm text-muted-foreground">
-        The Crocode API may be unavailable, or your account may not have access.
+        The CroCode API may be unavailable, or your account may not have access.
         Try again or return to your installations.
       </p>
       <div className="flex flex-wrap gap-3">

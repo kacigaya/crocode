@@ -65,7 +65,7 @@ The probe used the flags from `crates/server/src/sandbox.rs`, including the read
 Writes to `/repo`, `/input`, and `/etc` failed.
 Writes to `/output`, `/tmp`, and `/home/agent` worked.
 
-Claude accepted Crocode's complete flag set.
+Claude accepted CroCode's complete flag set.
 It returned `Not logged in` with zero API usage.
 Codex accepted `exec --sandbox read-only` and reached HTTP 401 without a token.
 These checks do not prove a complete model review or GitHub publication.
@@ -92,7 +92,7 @@ See the official [Linux sandbox prerequisites](https://developers.openai.com/cod
 `CROCODE_SANDBOX_RUNTIME=runsc` can select an installed gVisor runtime, but compatibility was not tested here.
 
 An OpenCode project-plugin probe executed code with the old command before model access.
-Crocode now uses `--pure` and disables project config, Claude config, and external skill discovery.
+CroCode now uses `--pure` and disables project config, Claude config, and external skill discovery.
 The same plugin probe did not execute with those controls.
 
 Local AMD64 builds were not possible because this ARM64 host has no AMD64 emulator.
