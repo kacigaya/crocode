@@ -1,4 +1,6 @@
-import type { DependencyAlert } from "./types";
+import type { DependencyAlert, RepositoryAlerts } from "./types";
+
+export type VulnerabilityView = "repositories" | "priority";
 
 export const severityOptions = [
   "all",
@@ -88,8 +90,10 @@ export function matchesVulnerability(
 export function vulnerabilityPageHref(
   page: number,
   filters: VulnerabilityFilters,
+  view: VulnerabilityView = "repositories",
 ): string {
   const query = new URLSearchParams({ page: String(page) });
+  if (view === "priority") query.set("view", view);
   for (const [key, value] of Object.entries(filters)) {
     if (
       value &&
@@ -111,4 +115,71 @@ export function hasVulnerabilityFilters(
       filters.scope !== "all" ||
       filters.fix !== "all",
   );
+}
+
+/** EPSS is a 0–1 probability. Missing or invalid values stay unknown. */
+export function epssProbability(alert: DependencyAlert): number | null {
+  const value = alert.security_advisory.epss?.percentage;
+  return typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 1
+    ? value
+    : null;
+}
+
+export function formatEpss(probability: number | null): string {
+  if (
+    probability === null ||
+    !Number.isFinite(probability) ||
+    probability < 0 ||
+    probability > 1
+  )
+    return "Unknown";
+  if (probability > 0 && probability < 0.0001) return "< 0.01%";
+  if (probability < 1 && probability > 0.9999) return "> 99.99%";
+  return new Intl.NumberFormat("en", {
+    style: "percent",
+    maximumFractionDigits: 2,
+  }).format(probability);
+}
+
+export type PriorityAlert = {
+  repo: string;
+  alert: DependencyAlert;
+  probability: number | null;
+};
+
+/** Severity, known EPSS probability, then patch availability. No synthetic risk score. */
+export function prioritizeVulnerabilities(
+  repositories: RepositoryAlerts[],
+  filters: VulnerabilityFilters,
+): PriorityAlert[] {
+  const severity = (alert: DependencyAlert) => {
+    const index = severityOptions.findIndex(
+      (value) => value === alert.security_vulnerability.severity,
+    );
+    return index <= 0 ? severityOptions.length : index;
+  };
+  const entries = repositories.flatMap(({ repo_full_name: repo, alerts }) =>
+    (alerts ?? [])
+      .filter((alert) => matchesVulnerability(repo, alert, filters))
+      .map((alert) => ({ repo, alert, probability: epssProbability(alert) })),
+  );
+  return entries.sort((a, b) => {
+    const rank = severity(a.alert) - severity(b.alert);
+    if (rank) return rank;
+    if (a.probability === null && b.probability !== null) return 1;
+    if (b.probability === null && a.probability !== null) return -1;
+    const probability = (b.probability ?? 0) - (a.probability ?? 0);
+    if (probability) return probability;
+    const patched =
+      Number(b.alert.security_vulnerability.first_patched_version !== null) -
+      Number(a.alert.security_vulnerability.first_patched_version !== null);
+    return (
+      patched ||
+      a.repo.localeCompare(b.repo, "en") ||
+      a.alert.number - b.alert.number
+    );
+  });
 }

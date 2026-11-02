@@ -273,7 +273,8 @@ A failed repository-list request returns `502`. No alert data or user token is s
       "security_advisory": {
         "ghsa_id": "GHSA-example",
         "cve_id": null,
-        "summary": "Advisory summary"
+        "summary": "Advisory summary",
+        "epss": { "percentage": 0.00045 }
       },
       "security_vulnerability": {
         "severity": "high",
@@ -313,3 +314,22 @@ GitHub's separate settings endpoint requires read-only Administration access. Cr
 
 The dashboard filters advisory text, repository, package, severity, dependency scope, and patch availability on the current repository page.
 Filters do not change this API response. Coverage stays unfiltered. Page links preserve filters in the dashboard URL.
+
+#### Fix priority queue
+
+`security_advisory.epss` contains GitHub's EPSS data when available. It can be null or absent.
+Its `percentage` field is a probability from 0 to 1, not a value from 0 to 100. The field can also be null.
+The dashboard displays a percentage and treats missing, non-finite, or out-of-range values as unknown.
+EPSS estimates whether a published CVE will be exploited in the next 30 days. It is not evidence of active exploitation.
+See [FIRST's EPSS documentation](https://www.first.org/epss/).
+
+The dashboard's `view=priority` mode ranks matching open alerts from readable repositories on the current page:
+
+1. Higher severity comes first. Unknown severity follows the known severities.
+2. Within a severity, higher known EPSS probability comes first. Unknown EPSS follows known values, including zero. Unknown does not mean low risk.
+3. If those fields are equal, alerts with a listed patch come first.
+4. Repository name and alert number break ties.
+
+Ranks restart on each repository page. No combined risk score is calculated.
+The queue respects the current filters. Switching views, submitting or clearing filters, and moving between pages preserve the selected view.
+Alerts from unreadable repositories are not ranked. The page marks the queue as incomplete when a repository cannot be read.

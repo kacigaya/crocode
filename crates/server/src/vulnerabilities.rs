@@ -25,10 +25,16 @@ struct Repositories {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+pub struct ExploitProbability {
+    pub percentage: Option<f64>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Advisory {
     pub ghsa_id: String,
     pub cve_id: Option<String>,
     pub summary: String,
+    pub epss: Option<ExploitProbability>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -395,6 +401,28 @@ mod tests {
             assert_eq!(failure_status(&error.into()), expected, "{path}");
         }
         server.abort();
+    }
+
+    #[test]
+    fn advisory_epss_is_optional_and_keeps_probability_units() {
+        let base = json!({"ghsa_id": "GHSA-test", "cve_id": null, "summary": "test"});
+        assert!(
+            serde_json::from_value::<Advisory>(base.clone())
+                .unwrap()
+                .epss
+                .is_none()
+        );
+        for (value, expected) in [
+            (json!(null), None),
+            (json!({"percentage": null}), Some(None)),
+            (json!({"percentage": 0}), Some(Some(0.0))),
+            (json!({"percentage": 0.00045}), Some(Some(0.00045))),
+        ] {
+            let mut input = base.clone();
+            input["epss"] = value;
+            let advisory: Advisory = serde_json::from_value(input).unwrap();
+            assert_eq!(advisory.epss.map(|epss| epss.percentage), expected);
+        }
     }
 
     #[tokio::test]

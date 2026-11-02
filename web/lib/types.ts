@@ -144,6 +144,7 @@ export type DependencyAlert = {
     ghsa_id: string;
     cve_id: string | null;
     summary: string;
+    epss?: { percentage: number | null } | null;
   };
   security_vulnerability: {
     severity: string;
