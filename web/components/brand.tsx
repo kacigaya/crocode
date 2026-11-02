@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { AVATAR_PREFIX } from "@/lib/avatar";
 import { asset } from "@/lib/docs-site";
 
 export function Brand({ href }: { href: string }) {
@@ -33,5 +34,32 @@ export function Monogram({
     >
       {name.slice(0, 1)}
     </span>
+  );
+}
+
+/** GitHub account picture, or the monogram when no picture is available. */
+export function Avatar({
+  name,
+  image,
+  size = "sm",
+}: {
+  name: string;
+  image?: string | null;
+  size?: "sm" | "lg";
+}) {
+  if (!image?.startsWith(AVATAR_PREFIX)) return <Monogram name={name} size={size} />;
+  const px = size === "lg" ? 40 : 24;
+  return (
+    <Image
+      src={image}
+      alt=""
+      width={px}
+      height={px}
+      className={
+        size === "lg"
+          ? "size-10 shrink-0 rounded-lg border bg-card"
+          : "size-6 shrink-0 rounded-md border bg-card"
+      }
+    />
   );
 }

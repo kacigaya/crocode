@@ -7,6 +7,8 @@ import {
 import { Brand } from "@/components/brand";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { api } from "@/lib/api";
+import { accountAvatar } from "@/lib/avatar";
+import { readSession } from "@/lib/auth";
 import { getEnv } from "@/lib/env";
 import type { Installation, User } from "@/lib/types";
 
@@ -15,13 +17,21 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const [user, installations] = await Promise.all([
+  const [user, installations, session] = await Promise.all([
     api<User>("/api/v1/me"),
     api<Installation[]>("/api/v1/installations"),
+    readSession(),
   ]);
+  // GitHub sign-in stores the display name and avatar in the session cookie.
+  const profile = {
+    login: user.login,
+    name: session?.user.name,
+    image: session?.user.image,
+  };
   const nav: NavInstallation[] = installations.map((i) => ({
     id: i.id,
     name: i.account_login,
+    image: accountAvatar(i.account_id),
     state: i.suspended
       ? "suspended"
       : i.settings.enabled
@@ -44,7 +54,7 @@ export default async function DashboardLayout({
             <AppNav installations={nav} installUrl={installUrl} />
           </div>
           <div className="border-t p-3">
-            <Account login={user.login} />
+            <Account {...profile} />
           </div>
         </aside>
       </div>
@@ -52,7 +62,7 @@ export default async function DashboardLayout({
         <MobileNav
           installations={nav}
           installUrl={installUrl}
-          login={user.login}
+          {...profile}
         />
         <main
           id="main-content"

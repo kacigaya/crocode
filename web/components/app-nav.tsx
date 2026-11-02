@@ -1,19 +1,22 @@
 "use client";
 
 import { BookOpen, LayoutGrid, LogOut, Menu, Plus, X } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useId, useRef, useState } from "react";
 import { signOut } from "@/app/auth-actions";
-import { Brand, Monogram } from "@/components/brand";
+import { Avatar, Brand, Monogram } from "@/components/brand";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
+import { AVATAR_PREFIX } from "@/lib/avatar";
 import { cn } from "@/lib/utils";
 import { DOCS_URL } from "@/lib/docs-site";
 
 export type NavInstallation = {
   id: number;
   name: string;
+  image: string | null;
   state: "enabled" | "disabled" | "suspended";
 };
 
@@ -64,7 +67,7 @@ export function AppNav({ installations, installUrl, onNavigate }: NavProps) {
                   aria-current={pathname === href ? "page" : undefined}
                   className={itemClass}
                 >
-                  <Monogram name={installation.name} />
+                  <Avatar name={installation.name} image={installation.image} />
                   <span className="min-w-0 flex-1 truncate">
                     {installation.name}
                   </span>
@@ -110,13 +113,38 @@ export function AppNav({ installations, installUrl, onNavigate }: NavProps) {
   );
 }
 
-export function Account({ login }: { login: string }) {
+/** The signed-in GitHub user, from the Better Auth session. */
+export type Profile = {
+  login: string;
+  name?: string | null;
+  image?: string | null;
+};
+
+export function Account({ login, name, image }: Profile) {
+  const displayName = name?.trim() || login;
   return (
     <div className="flex items-center gap-2.5">
-      <Monogram name={login} />
-      <span className="min-w-0 flex-1 truncate text-sm" title={login}>
-        @{login}
-      </span>
+      {image?.startsWith(AVATAR_PREFIX) ? (
+        <Image
+          src={image}
+          alt=""
+          width={32}
+          height={32}
+          className="size-8 shrink-0 rounded-full border"
+        />
+      ) : (
+        <Monogram name={login} />
+      )}
+      <div className="min-w-0 flex-1 leading-tight">
+        <p className="truncate text-sm font-medium" title={displayName}>
+          {displayName}
+        </p>
+        {displayName !== login && (
+          <p className="truncate text-xs text-muted-foreground" title={login}>
+            @{login}
+          </p>
+        )}
+      </div>
       <form action={signOut}>
         <Button type="submit" variant="ghost" size="icon" aria-label="Sign out">
           <LogOut aria-hidden="true" />
@@ -127,7 +155,7 @@ export function Account({ login }: { login: string }) {
 }
 
 /** Top bar with a menu panel, shown below the md breakpoint. */
-export function MobileNav(props: NavProps & { login: string }) {
+export function MobileNav(props: NavProps & Profile) {
   const [open, setOpen] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
   const panelId = useId();
@@ -169,7 +197,7 @@ export function MobileNav(props: NavProps & { login: string }) {
       >
         <AppNav {...props} onNavigate={close} />
         <div className="border-t px-2 pt-4">
-          <Account login={props.login} />
+          <Account login={props.login} name={props.name} image={props.image} />
         </div>
       </div>
     </header>

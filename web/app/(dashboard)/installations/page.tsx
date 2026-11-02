@@ -1,11 +1,12 @@
 import { ArrowRight, Plus } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Monogram } from "@/components/brand";
+import { Avatar } from "@/components/brand";
 import { PageHeader, StatGrid } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { accountAvatar } from "@/lib/avatar";
 import { getEnv } from "@/lib/env";
 import type { Agents, Installation } from "@/lib/types";
 
@@ -72,7 +73,11 @@ export default async function InstallationsPage() {
                   className="group relative flex flex-col gap-4 rounded-xl border bg-card p-4 transition-colors hover:border-foreground/20"
                 >
                   <div className="flex items-start gap-3">
-                    <Monogram name={installation.account_login} size="lg" />
+                    <Avatar
+                      name={installation.account_login}
+                      image={accountAvatar(installation.account_id)}
+                      size="lg"
+                    />
                     <div className="min-w-0 flex-1">
                       <h3 className="truncate font-semibold">
                         <Link

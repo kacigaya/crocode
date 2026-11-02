@@ -23,6 +23,7 @@ pub async fn connect(url: &str) -> anyhow::Result<Db> {
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Installation {
     pub id: i64,
+    pub account_id: i64,
     pub account_login: String,
     pub account_type: String,
     pub repository_selection: String,
@@ -90,7 +91,7 @@ pub async fn set_installation_state(
 
 pub async fn installation(db: &Db, id: i64) -> sqlx::Result<Option<Installation>> {
     sqlx::query_as(
-        "SELECT id, account_login, account_type, repository_selection, suspended,
+        "SELECT id, account_id, account_login, account_type, repository_selection, suspended,
                 enabled, agent, model, created_at
          FROM installations WHERE id = $1 AND NOT deleted",
     )
@@ -101,7 +102,7 @@ pub async fn installation(db: &Db, id: i64) -> sqlx::Result<Option<Installation>
 
 pub async fn installations(db: &Db, ids: &[i64]) -> sqlx::Result<Vec<Installation>> {
     sqlx::query_as(
-        "SELECT id, account_login, account_type, repository_selection, suspended,
+        "SELECT id, account_id, account_login, account_type, repository_selection, suspended,
                 enabled, agent, model, created_at
          FROM installations WHERE id = ANY($1) AND NOT deleted ORDER BY account_login",
     )

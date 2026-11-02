@@ -11,6 +11,7 @@ export type Settings = {
 };
 export type Installation = {
   id: number;
+  account_id: number;
   account_login: string;
   account_type: string;
   repository_selection: string;

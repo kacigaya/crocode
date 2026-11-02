@@ -48,6 +48,7 @@ Installations that the user can access and that exist in the database.
 [
   {
     "id": 123,
+    "account_id": 456,
     "account_login": "acme",
     "account_type": "Organization",
     "repository_selection": "selected",
@@ -59,6 +60,7 @@ Installations that the user can access and that exist in the database.
 ]
 ```
 
+`account_id` is the GitHub user or organization ID.
 `can_admin` is true when the user owns the account or is an organization admin.
 `settings.agent` and `settings.model` are `null` when the installation uses the server default.
 

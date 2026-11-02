@@ -2,13 +2,14 @@ import { ChevronRight, ExternalLink } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Monogram } from "@/components/brand";
+import { Avatar } from "@/components/brand";
 import { PageHeader, StatGrid } from "@/components/page-header";
 import { SettingsForm } from "@/components/settings-form";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { accountAvatar } from "@/lib/avatar";
 import {
   formatRelative,
   formatTime,
@@ -70,7 +71,13 @@ export default async function InstallationPage({
           { label: "Installations", href: "/installations" },
           { label: installation.account_login },
         ]}
-        leading={<Monogram name={installation.account_login} size="lg" />}
+        leading={
+          <Avatar
+            name={installation.account_login}
+            image={accountAvatar(installation.account_id)}
+            size="lg"
+          />
+        }
         title={installation.account_login}
         description={
           <>

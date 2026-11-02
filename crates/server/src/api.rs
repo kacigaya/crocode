@@ -164,6 +164,8 @@ async fn agents(State(state): State<AppState>) -> Json<serde_json::Value> {
 #[derive(Serialize)]
 struct InstallationView {
     id: i64,
+    /// GitHub user or organization ID. Clients use it for avatars.
+    account_id: i64,
     account_login: String,
     account_type: String,
     repository_selection: String,
@@ -183,6 +185,7 @@ struct SettingsView {
 fn view(i: db::Installation, can_admin: bool) -> InstallationView {
     InstallationView {
         id: i.id,
+        account_id: i.account_id,
         account_login: i.account_login,
         account_type: i.account_type,
         repository_selection: i.repository_selection,
