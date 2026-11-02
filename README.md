@@ -19,7 +19,7 @@
 </p>
 
 > [!NOTE]
-> CroCode is in development. No release is published yet.
+> CroCode is in development. See the [releases](https://github.com/kacigaya/crocode/releases) for available versions.
 
 ## How it works
 

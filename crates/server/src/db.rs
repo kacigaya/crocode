@@ -378,6 +378,7 @@ pub async fn insert_findings(
     repo_id: i64,
     pr_number: i64,
     findings: &[NewFinding<'_>],
+    files: &[(&str, &str)],
 ) -> sqlx::Result<()> {
     let mut tx = db.begin().await?;
     // A retried review replaces the findings of its earlier attempt.
@@ -407,6 +408,18 @@ pub async fn insert_findings(
         .bind(f.published)
         .execute(&mut *tx)
         .await?;
+    }
+    sqlx::query("DELETE FROM review_files WHERE review_id = $1")
+        .bind(review_id)
+        .execute(&mut *tx)
+        .await?;
+    for (path, patch) in files {
+        sqlx::query("INSERT INTO review_files (review_id, path, patch) VALUES ($1, $2, $3)")
+            .bind(review_id)
+            .bind(path)
+            .bind(patch)
+            .execute(&mut *tx)
+            .await?;
     }
     tx.commit().await
 }
@@ -484,14 +497,34 @@ pub struct FindingRow {
     pub published: bool,
 }
 
-pub async fn findings(db: &Db, review_id: Uuid) -> sqlx::Result<Vec<FindingRow>> {
-    sqlx::query_as(
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct ReviewFileRow {
+    pub path: String,
+    pub patch: String,
+}
+
+pub async fn review_contents(
+    db: &Db,
+    review_id: Uuid,
+) -> sqlx::Result<(Vec<FindingRow>, Vec<ReviewFileRow>)> {
+    let mut tx = db.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let findings = sqlx::query_as(
         "SELECT id, path, start_line, line, severity, category, title, body, suggestion, published
          FROM findings WHERE review_id = $1
          ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2
                                 WHEN 'low' THEN 3 ELSE 4 END, path, line",
     )
     .bind(review_id)
-    .fetch_all(db)
-    .await
+    .fetch_all(&mut *tx)
+    .await?;
+    let files =
+        sqlx::query_as("SELECT path, patch FROM review_files WHERE review_id = $1 ORDER BY path")
+            .bind(review_id)
+            .fetch_all(&mut *tx)
+            .await?;
+    tx.commit().await?;
+    Ok((findings, files))
 }

@@ -120,7 +120,13 @@ The Docker context excludes local environment files, dependencies, and build out
 
 ## Contract and limits
 
-The dashboard follows `docs/api.md`. It makes no contract changes.
+The dashboard follows `docs/api.md`.
+Review pages group findings by file and show them next to the reviewed diff.
+Suggested changes show a diff against the stored lines when available.
+The API stores patches and findings in one transaction. Migration
+`0002_review_files.sql` adds patch storage. The API applies it at startup.
+Older reviews and files without a usable stored patch use a plain finding list.
+Patches over 256 KiB per file are not stored.
 History loads 20 reviews per page. “Load older” opens the next cursor page.
 The API cursor is a timestamp. It cannot distinguish reviews with identical
 `created_at` values at a page boundary.

@@ -11,7 +11,7 @@
 ## Commands
 
 - Rust checks: `cargo fmt --all --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --all`.
-- Database tests: `DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/postgres cargo test --all -- --include-ignored`. SQLx needs a user that can create databases. Plain tests skip these 8 tests.
+- Database tests: `DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/postgres cargo test --all -- --include-ignored`. SQLx needs a user that can create databases. Plain tests skip these 10 tests.
 - Compose database: `sudo docker compose up -d postgres` after `.env` setup. From a host test process, use a reachable Postgres URL; Compose does not publish its database port.
 - Web checks (in `web/`): `bun install --frozen-lockfile`, `bun run lint`, `bun run typecheck`, `bun test`, `bun run build`.
 - Docs checks (in `web/`): `bun run build:docs`, `bun run scripts/check-docs-export.ts`. GitHub Pages publishes `web/site/out/` at `https://kacigaya.github.io/crocode/` through `.github/workflows/pages.yml`. The static app uses base path `/crocode` and excludes dashboard and auth routes.

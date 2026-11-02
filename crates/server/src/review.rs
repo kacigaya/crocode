@@ -1,6 +1,6 @@
 //! One review: fetch, run the agent, validate, publish.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -20,6 +20,8 @@ use crate::sandbox::{self, RunError};
 use crate::{AppState, db};
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(300);
+/// Larger patches are not stored for the dashboard diff view.
+const MAX_STORED_PATCH: usize = 256 * 1024;
 
 pub enum Outcome {
     Done {
@@ -310,7 +312,14 @@ pub async fn execute(
             published,
         })
         .collect();
-    db::insert_findings(&state.db, job.id, job.repo_id, number, &rows).await?;
+    let finding_paths: HashSet<&str> = rows.iter().map(|f| f.path).collect();
+    let patches: Vec<(&str, &str)> = reviewed
+        .iter()
+        .filter(|f| finding_paths.contains(f.filename.as_str()))
+        .filter_map(|f| Some((f.filename.as_str(), f.patch.as_deref()?)))
+        .filter(|(_, patch)| patch.len() <= MAX_STORED_PATCH)
+        .collect();
+    db::insert_findings(&state.db, job.id, job.repo_id, number, &rows, &patches).await?;
 
     let summary = if new.is_empty() {
         format!("{}\n\nNo new findings.", validated.summary)

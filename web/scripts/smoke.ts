@@ -358,8 +358,11 @@ try {
   response = await get(`/reviews/${reviewId}`);
   const detail = await response.text();
   assert.equal(response.status, 200);
-  assert.ok(
-    detail.indexOf("high finding") < detail.indexOf("low finding"),
+  // Match rendered headings only: the findings also appear in the React
+  // Server Components payload, in API order.
+  assert.deepEqual(
+    [...detail.matchAll(/<h3[^>]*>(\w+) finding<\/h3>/g)].map((m) => m[1]),
+    ["high", "low"],
     "Findings sorted by severity",
   );
   assert.ok(!detail.includes('<script>alert("summary")</script>'));

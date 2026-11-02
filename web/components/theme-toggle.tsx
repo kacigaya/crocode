@@ -46,9 +46,13 @@ function subscribe(onChange: () => void) {
 
 const isDark = () => document.documentElement.classList.contains("dark");
 
+/** The active theme. null on the server: it is only known in the browser. */
+export function useIsDark() {
+  return useSyncExternalStore<boolean | null>(subscribe, isDark, () => null);
+}
+
 export function ThemeToggle() {
-  // null on the server: the theme is only known in the browser.
-  const dark = useSyncExternalStore<boolean | null>(subscribe, isDark, () => null);
+  const dark = useIsDark();
 
   function toggle() {
     const next = !isDark();

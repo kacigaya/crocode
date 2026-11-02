@@ -401,7 +401,7 @@ async fn findings_replace_on_retry_and_dedupe_only_published_in_same_pr(pool: Pg
     installation(&pool, 1).await;
     let id = enqueue(&pool, 1, 1).await;
     let other_pr = enqueue(&pool, 1, 2).await;
-    db::insert_findings(&pool, other_pr, 10, 2, &[finding("other-pr", true)])
+    db::insert_findings(&pool, other_pr, 10, 2, &[finding("other-pr", true)], &[])
         .await
         .unwrap();
     db::insert_findings(
@@ -410,10 +410,11 @@ async fn findings_replace_on_retry_and_dedupe_only_published_in_same_pr(pool: Pg
         10,
         1,
         &[finding("old", true), finding("unpublished", false)],
+        &[],
     )
     .await
     .unwrap();
-    assert_eq!(db::findings(&pool, id).await.unwrap().len(), 2);
+    assert_eq!(db::review_contents(&pool, id).await.unwrap().0.len(), 2);
     assert_eq!(
         db::published_fingerprints(&pool, 10, 1).await.unwrap(),
         ["old".into()].into()
@@ -424,10 +425,10 @@ async fn findings_replace_on_retry_and_dedupe_only_published_in_same_pr(pool: Pg
             .unwrap()
             .is_empty()
     );
-    db::insert_findings(&pool, id, 10, 1, &[finding("new", true)])
+    db::insert_findings(&pool, id, 10, 1, &[finding("new", true)], &[])
         .await
         .unwrap();
-    let rows = db::findings(&pool, id).await.unwrap();
+    let rows = db::review_contents(&pool, id).await.unwrap().0;
     assert_eq!(rows.len(), 1);
     assert_eq!(
         (
@@ -442,9 +443,88 @@ async fn findings_replace_on_retry_and_dedupe_only_published_in_same_pr(pool: Pg
         db::published_fingerprints(&pool, 10, 1).await.unwrap(),
         ["new".into()].into()
     );
-    assert_eq!(db::findings(&pool, other_pr).await.unwrap().len(), 1);
-    db::insert_findings(&pool, id, 10, 1, &[]).await.unwrap();
-    assert!(db::findings(&pool, id).await.unwrap().is_empty());
+    assert_eq!(
+        db::review_contents(&pool, other_pr).await.unwrap().0.len(),
+        1
+    );
+    db::insert_findings(&pool, id, 10, 1, &[], &[])
+        .await
+        .unwrap();
+    assert!(db::review_contents(&pool, id).await.unwrap().0.is_empty());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "needs DATABASE_URL"]
+async fn review_files_replace_on_retry(pool: PgPool) {
+    installation(&pool, 1).await;
+    let id = enqueue(&pool, 1, 1).await;
+    let other = enqueue(&pool, 1, 2).await;
+    db::insert_findings(&pool, other, 10, 2, &[], &[("a.rs", "@@ -1 +1 @@\n-a\n+b")])
+        .await
+        .unwrap();
+    db::insert_findings(
+        &pool,
+        id,
+        10,
+        1,
+        &[],
+        &[("b.rs", "old"), ("a.rs", "@@ -1 +1 @@")],
+    )
+    .await
+    .unwrap();
+    let paths: Vec<String> = db::review_contents(&pool, id)
+        .await
+        .unwrap()
+        .1
+        .into_iter()
+        .map(|f| f.path)
+        .collect();
+    assert_eq!(paths, ["a.rs", "b.rs"]);
+    db::insert_findings(&pool, id, 10, 1, &[], &[("b.rs", "new")])
+        .await
+        .unwrap();
+    let rows = db::review_contents(&pool, id).await.unwrap().1;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].path.as_str(), rows[0].patch.as_str()),
+        ("b.rs", "new")
+    );
+    assert_eq!(db::review_contents(&pool, other).await.unwrap().1.len(), 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "needs DATABASE_URL"]
+async fn review_contents_roll_back_together(pool: PgPool) {
+    installation(&pool, 1).await;
+    let id = enqueue(&pool, 1, 1).await;
+    db::insert_findings(
+        &pool,
+        id,
+        10,
+        1,
+        &[finding("old", true)],
+        &[("a.rs", "old")],
+    )
+    .await
+    .unwrap();
+    // Duplicate paths fail after the replacement findings have been inserted.
+    assert!(
+        db::insert_findings(
+            &pool,
+            id,
+            10,
+            1,
+            &[finding("new", false)],
+            &[("a.rs", "new"), ("a.rs", "duplicate")],
+        )
+        .await
+        .is_err()
+    );
+    let (findings, files) = db::review_contents(&pool, id).await.unwrap();
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].published);
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].patch, "old");
 }
 
 #[tokio::test]

@@ -127,8 +127,14 @@ One review with its findings.
       "suggestion": "replacement code or null",
       "published": true
     }
+  ],
+  "files": [
+    { "path": "src/auth.rs", "patch": "@@ -118,3 +118,4 @@ ..." }
   ]
 }
 ```
+
+`files` holds the GitHub PR patch of each file with findings, as reviewed.
+Patches over 256 KiB are left out. Reviews from before this field have none.
 
 `severity` is one of `critical`, `high`, `medium`, `low`, `info`.

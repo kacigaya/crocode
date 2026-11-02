@@ -1,19 +1,19 @@
-import { AlertTriangle, FileCode } from "lucide-react";
+import { AlertTriangle, ExternalLink } from "lucide-react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/page-header";
+import { ReviewFindings } from "@/components/review-findings";
 import { StatusBadge } from "@/components/status-badge";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { formatDuration, formatTime, validReviewId } from "@/lib/format";
-import { cn } from "@/lib/utils";
 import {
-  SEVERITIES,
-  type Finding,
   type Installation,
   type ReviewDetail,
+  SEVERITIES,
   type Severity,
 } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Review" };
 
@@ -32,9 +32,12 @@ export default async function ReviewPage({
 }) {
   const { id } = await params;
   if (!validReviewId(id)) notFound();
-  const { review, summary, findings } = await api<ReviewDetail>(
-    `/api/v1/reviews/${id}`,
-  );
+  const {
+    review,
+    summary,
+    findings,
+    files = [],
+  } = await api<ReviewDetail>(`/api/v1/reviews/${id}`);
   const installation = await api<Installation>(
     `/api/v1/installations/${review.installation_id}`,
   );
@@ -42,7 +45,20 @@ export default async function ReviewPage({
   const counts = SEVERITIES.map((severity) => ({
     severity,
     count: findings.filter((f) => f.severity === severity).length,
-  }));
+  })).filter(({ count }) => count > 0);
+  const webUrl = (
+    process.env.GITHUB_WEB_URL?.trim() || "https://github.com"
+  ).replace(/\/$/, "");
+  const details = [
+    ["Agent", review.agent ?? "–"],
+    ["Model", review.model ?? "Agent default"],
+    ["Duration", duration ?? "–"],
+    ["Attempts", String(review.attempts)],
+    [
+      "Finished",
+      review.finished_at ? formatTime(review.finished_at) : "Not finished",
+    ],
+  ];
 
   return (
     <>
@@ -59,204 +75,101 @@ export default async function ReviewPage({
         meta={
           <>
             <StatusBadge value={review.status} />
-            <span className="font-mono text-xs text-muted-foreground">
+            <span
+              className="font-mono text-xs text-muted-foreground"
+              title={review.head_sha}
+            >
               {review.repo_full_name}#{review.pr_number} ·{" "}
               {review.head_sha.slice(0, 7)}
             </span>
           </>
         }
+        actions={
+          <Button
+            variant="outline"
+            render={
+              <a
+                href={`${webUrl}/${review.repo_full_name}/pull/${review.pr_number}`}
+              />
+            }
+          >
+            View pull request
+            <ExternalLink aria-hidden="true" />
+          </Button>
+        }
       />
 
-      <section aria-label="Findings by severity">
-        <dl className="flex flex-wrap gap-2">
-          {counts.map(({ severity, count }) => (
-            <div
-              key={severity}
-              className={cn(
-                "flex items-center gap-2 rounded-lg border bg-card px-3 py-2",
-                count === 0 && "opacity-60",
-              )}
-            >
-              <span
-                aria-hidden="true"
-                className={cn("size-2 rounded-full", dot[severity])}
-              />
-              <dt className="text-sm capitalize text-muted-foreground">
-                {severity}
-              </dt>
-              <dd className="text-sm font-semibold tabular-nums">{count}</dd>
+      <section aria-label="Review details" className="space-y-4">
+        <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+          {details.map(([label, value]) => (
+            <div key={label} className="flex gap-1.5">
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className="font-mono text-xs leading-5 tabular-nums">
+                {value}
+              </dd>
             </div>
           ))}
         </dl>
+        {/* Agent output is untrusted: render it as plain text, never as HTML. */}
+        <p className="max-w-3xl text-pretty whitespace-pre-wrap break-words leading-relaxed text-muted-foreground">
+          {summary || "No summary is available for this review."}
+        </p>
       </section>
 
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <div className="min-w-0 space-y-6">
-          {review.error && (
-            <section
-              role="alert"
-              className="flex gap-3 rounded-xl border border-destructive/30 bg-card p-4"
-            >
-              <AlertTriangle
-                aria-hidden="true"
-                className="mt-0.5 size-4 shrink-0 text-destructive-foreground"
-              />
-              <div className="min-w-0">
-                <h2 className="text-sm font-semibold">Review error</h2>
-                <p className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
-                  {review.error}
-                </p>
-              </div>
-            </section>
-          )}
-
-          <section
-            aria-labelledby="summary-title"
-            className="rounded-xl border bg-card p-4"
-          >
-            <h2 id="summary-title" className="text-sm font-semibold">
-              Summary
-            </h2>
-            <p className="mt-2 whitespace-pre-wrap text-pretty break-words text-sm leading-relaxed text-muted-foreground">
-              {summary || "No summary is available for this review."}
-            </p>
-          </section>
-
-          <section aria-labelledby="findings-title" className="space-y-4">
-            <h2 id="findings-title" className="text-sm font-semibold">
-              Findings{" "}
-              <span className="font-normal tabular-nums text-muted-foreground">
-                {findings.length}
-              </span>
-            </h2>
-            {findings.length === 0 ? (
-              <p className="rounded-xl border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
-                {review.status === "succeeded"
-                  ? "No findings in this review."
-                  : "No findings are available for this review."}
-              </p>
-            ) : (
-              <ol className="space-y-4">
-                {sortFindings(findings).map((finding) => (
-                  <li key={finding.id}>
-                    <FindingCard finding={finding} />
-                  </li>
-                ))}
-              </ol>
-            )}
-          </section>
-        </div>
-
-        <aside
-          aria-labelledby="details-title"
-          className="rounded-xl border bg-card lg:sticky lg:top-8"
+      {review.error && (
+        <section
+          role="alert"
+          className="flex gap-3 border-l-2 border-destructive py-1 ps-4"
         >
-          <h2
-            id="details-title"
-            className="border-b px-4 py-3 text-sm font-semibold"
-          >
-            Details
+          <AlertTriangle
+            aria-hidden="true"
+            className="mt-0.5 size-4 shrink-0 text-destructive-foreground"
+          />
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold">Review error</h2>
+            <p className="mt-1 whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
+              {review.error}
+            </p>
+          </div>
+        </section>
+      )}
+
+      <section aria-labelledby="findings-title" className="space-y-4">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <h2 id="findings-title" className="font-semibold">
+            Findings{" "}
+            <span className="font-normal tabular-nums text-muted-foreground">
+              {findings.length}
+            </span>
           </h2>
-          <dl className="divide-y text-sm">
-            {[
-              ["Agent", review.agent ?? "–"],
-              ["Model", review.model ?? "Agent default"],
-              ["Attempts", String(review.attempts)],
-              ["Duration", duration ?? "–"],
-              ["Created", formatTime(review.created_at)],
-              [
-                "Finished",
-                review.finished_at
-                  ? formatTime(review.finished_at)
-                  : "Not finished",
-              ],
-              ["Commit", review.head_sha],
-              ["Review ID", review.id],
-            ].map(([label, value]) => (
-              <div key={label} className="px-4 py-2.5">
-                <dt className="text-xs text-muted-foreground">{label}</dt>
-                <dd className="mt-0.5 break-all font-mono text-xs tabular-nums">
-                  {value}
-                </dd>
-              </div>
-            ))}
-          </dl>
-        </aside>
-      </div>
-    </>
-  );
-}
-
-function sortFindings(findings: Finding[]) {
-  const rank = (s: Severity) => SEVERITIES.indexOf(s);
-  return [...findings].sort(
-    (a, b) =>
-      rank(a.severity) - rank(b.severity) ||
-      a.path.localeCompare(b.path) ||
-      a.line - b.line ||
-      a.id.localeCompare(b.id),
-  );
-}
-
-function FindingCard({ finding }: { finding: Finding }) {
-  const range =
-    finding.start_line !== null && finding.start_line !== finding.line
-      ? `${finding.start_line}-${finding.line}`
-      : String(finding.line);
-  return (
-    <article className="overflow-hidden rounded-xl border bg-card">
-      <header className="flex flex-wrap items-center gap-2 border-b bg-muted/50 px-4 py-2">
-        <FileCode
-          aria-hidden="true"
-          className="size-3.5 text-muted-foreground"
-        />
-        <span className="min-w-0 flex-1 break-all font-mono text-xs">
-          {finding.path}
-          <span className="text-muted-foreground">:{range}</span>
-        </span>
-        <StatusBadge value={finding.severity} />
-        <Badge variant="outline" className="capitalize">
-          {finding.category}
-        </Badge>
-      </header>
-      <div className="space-y-2 p-4">
-        <h3 className="text-pretty break-words font-semibold">
-          {finding.title}
-        </h3>
-        {/* Agent output is untrusted: render it as plain text, never as HTML. */}
-        <p className="whitespace-pre-wrap text-pretty break-words text-sm leading-relaxed text-muted-foreground">
-          {finding.body}
-        </p>
-        <p className="text-xs text-muted-foreground">
-          {finding.published ? "Posted on the pull request" : "Not posted"}
-        </p>
-      </div>
-      {finding.suggestion !== null && (
-        <div className="border-t">
-          <p className="px-4 pt-3 text-xs font-medium text-muted-foreground">
-            Suggested change
-          </p>
-          <pre
-            tabIndex={0}
-            aria-label="Suggested code change"
-            className="m-4 mt-2 max-w-full overflow-x-auto rounded-lg border bg-success/5 py-2 font-mono text-xs leading-relaxed"
-          >
-            <code>
-              {finding.suggestion.split("\n").map((line, index) => (
-                <span key={index} className="flex">
+          {counts.length > 0 && (
+            <ul
+              aria-label="Findings by severity"
+              className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground"
+            >
+              {counts.map(({ severity, count }) => (
+                <li key={severity} className="flex items-center gap-1.5">
                   <span
                     aria-hidden="true"
-                    className="w-8 shrink-0 select-none text-center text-success-foreground"
-                  >
-                    +
-                  </span>
-                  <span className="pr-4">{line || " "}</span>
-                </span>
+                    className={cn("size-2 rounded-full", dot[severity])}
+                  />
+                  <span className="tabular-nums text-foreground">{count}</span>
+                  <span className="capitalize">{severity}</span>
+                </li>
               ))}
-            </code>
-          </pre>
+            </ul>
+          )}
         </div>
-      )}
-    </article>
+        {findings.length === 0 ? (
+          <p className="border-y border-dashed py-10 text-center text-sm text-muted-foreground">
+            {review.status === "succeeded"
+              ? "No findings in this review."
+              : "No findings are available for this review."}
+          </p>
+        ) : (
+          <ReviewFindings findings={findings} files={files} />
+        )}
+      </section>
+    </>
   );
 }

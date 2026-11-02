@@ -59,8 +59,12 @@ export type Finding = {
   suggestion: string | null;
   published: boolean;
 };
+/** GitHub PR patch of one file with findings, stored at review time. */
+export type ReviewFile = { path: string; patch: string };
 export type ReviewDetail = {
   review: Review;
   summary: string | null;
   findings: Finding[];
+  /** Empty for reviews stored before patches were kept. */
+  files?: ReviewFile[];
 };
