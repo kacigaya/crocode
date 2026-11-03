@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ActivityChart } from "@/components/activity-chart";
+import { AgentHealthTable } from "@/components/agent-health";
 import { FindingsBreakdown } from "@/components/findings-breakdown";
 import { OpenPullsTable } from "@/components/open-pulls-table";
 import { StatGrid } from "@/components/page-header";
@@ -30,6 +31,7 @@ import { Meter } from "@/components/ui/meter";
 import { api, optionalApi } from "@/lib/api";
 import { formatSeconds, validCursor, validInstallationId } from "@/lib/format";
 import {
+  type Agents,
   type Installation,
   type OpenPulls,
   type Review,
@@ -59,11 +61,12 @@ export default async function InstallationPage({
     limit: String(PAGE_SIZE),
     ...(before ? { before } : {}),
   });
-  const [installation, reviews, stats, pulls] = await Promise.all([
+  const [installation, reviews, stats, pulls, agents] = await Promise.all([
     api<Installation>(`/api/v1/installations/${id}`),
     api<Review[]>(`/api/v1/installations/${id}/reviews?${query}`),
     api<Stats>(`/api/v1/installations/${id}/stats`),
     optionalApi<OpenPulls>(`/api/v1/installations/${id}/pulls`),
+    optionalApi<Agents>("/api/v1/agents"),
   ]);
   const webUrl = (
     process.env.GITHUB_WEB_URL?.trim() || "https://github.com"
@@ -218,6 +221,25 @@ export default async function InstallationPage({
           </CardPanel>
         </Card>
       </div>
+
+      <Card className="overflow-hidden">
+        <CardHeader className="border-b px-4 py-3">
+          <CardTitle render={<h2 />} className="text-sm">
+            Agent health and usage
+          </CardTitle>
+          <CardDescription className="text-xs">
+            Harness shows whether the agent CLI answered its last model list
+            check in the sandbox. It does not test credentials. Time and tokens
+            cover this installation for the last {stats.days} days, as each
+            CLI reports them.
+          </CardDescription>
+        </CardHeader>
+        <AgentHealthTable
+          agents={agents}
+          usage={stats.agents ?? []}
+          days={stats.days}
+        />
+      </Card>
 
       <Card className="overflow-hidden">
         <CardHeader className="border-b px-4 py-3">

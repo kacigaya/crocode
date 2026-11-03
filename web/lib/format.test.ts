@@ -1,5 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { formatDuration, formatRelative, formatSeconds } from "./format";
+import {
+  formatCount,
+  formatDuration,
+  formatRelative,
+  formatSeconds,
+} from "./format";
+
+test("formatCount stays compact and keeps unknown values", () => {
+  expect(formatCount(0)).toBe("0");
+  expect(formatCount(950)).toBe("950");
+  expect(formatCount(24_388)).toBe("24.4K");
+  expect(formatCount(1_250_000)).toBe("1.3M");
+  expect(formatCount(null)).toBeNull();
+});
 
 const now = Date.parse("2026-11-01T14:00:00Z");
 

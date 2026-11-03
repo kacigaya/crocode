@@ -35,6 +35,7 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
     }
     tasks.spawn(reaper(state.clone(), shutdown.clone()));
     tasks.spawn(crate::models::refresh_loop(state.clone(), shutdown.clone()));
+    tasks.spawn(crate::digest::run(state.clone(), shutdown.clone()));
     while tasks.join_next().await.is_some() {}
     info!("worker stopped");
 }
@@ -103,7 +104,7 @@ async fn process(state: &AppState, worker: &str, job: db::Job, shutdown: &Cancel
         })
     };
 
-    let result = review::execute(state, &job, &cancel).await;
+    let result = review::execute(state, &job, worker, &cancel).await;
     heartbeat.abort();
 
     let outcome = match result {
@@ -111,6 +112,8 @@ async fn process(state: &AppState, worker: &str, job: db::Job, shutdown: &Cancel
             summary,
             agent,
             model,
+            agent_ms,
+            usage,
         }) => {
             info!("review succeeded");
             db::finish_review(
@@ -120,9 +123,13 @@ async fn process(state: &AppState, worker: &str, job: db::Job, shutdown: &Cancel
                 &db::Finish {
                     status: "succeeded",
                     summary: Some(&summary),
-                    error: None,
                     agent: Some(agent.name()),
                     model: model.as_deref(),
+                    agent_ms: Some(agent_ms),
+                    input_tokens: usage.input_tokens,
+                    cached_input_tokens: usage.cached_input_tokens,
+                    output_tokens: usage.output_tokens,
+                    ..Default::default()
                 },
             )
             .await
@@ -136,9 +143,7 @@ async fn process(state: &AppState, worker: &str, job: db::Job, shutdown: &Cancel
                 &db::Finish {
                     status: "skipped",
                     summary: Some(&reason),
-                    error: None,
-                    agent: None,
-                    model: None,
+                    ..Default::default()
                 },
             )
             .await
@@ -156,10 +161,7 @@ async fn process(state: &AppState, worker: &str, job: db::Job, shutdown: &Cancel
                 worker,
                 &db::Finish {
                     status: "cancelled",
-                    summary: None,
-                    error: None,
-                    agent: None,
-                    model: None,
+                    ..Default::default()
                 },
             )
             .await
@@ -174,8 +176,7 @@ async fn process(state: &AppState, worker: &str, job: db::Job, shutdown: &Cancel
                     status: "failed",
                     summary: None,
                     error: Some(&message),
-                    agent: None,
-                    model: None,
+                    ..Default::default()
                 },
             )
             .await
@@ -196,8 +197,7 @@ async fn process(state: &AppState, worker: &str, job: db::Job, shutdown: &Cancel
                         status: "failed",
                         summary: None,
                         error: Some(&message),
-                        agent: None,
-                        model: None,
+                        ..Default::default()
                     },
                 )
                 .await
@@ -206,6 +206,11 @@ async fn process(state: &AppState, worker: &str, job: db::Job, shutdown: &Cancel
     };
     if let Err(err) = outcome {
         error!(error = %err, "save review state");
+    }
+    // The agent has stopped. A review that another writer finished, such as a
+    // dashboard cancel, can now be retried.
+    if let Err(err) = db::release_lock(&state.db, job.id, worker).await {
+        warn!(error = %err, "release review lease");
     }
 }
 

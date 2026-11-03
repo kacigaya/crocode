@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Avatar } from "@/components/brand";
 import { PageHeader } from "@/components/page-header";
+import { ReviewControls } from "@/components/review-controls";
 import { ReviewFindings } from "@/components/review-findings";
 import { severityColor, StatusBadge } from "@/components/status-badge";
 import { TimeAgo } from "@/components/time-ago";
@@ -13,7 +14,14 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
 import { api, optionalApi } from "@/lib/api";
 import { accountAvatar } from "@/lib/avatar";
-import { formatDuration, formatTime, validReviewId } from "@/lib/format";
+import { canCancel, canRetry, explainReview } from "@/lib/failure";
+import {
+  formatCount,
+  formatDuration,
+  formatSeconds,
+  formatTime,
+  validReviewId,
+} from "@/lib/format";
 import {
   type Installation,
   type PullDetail,
@@ -35,12 +43,27 @@ const pullState: Record<
   closed: { label: "Closed", variant: "secondary" },
 };
 
+const notices: Record<string, string> = {
+  retry: "The review is queued again. Reload the page to follow it.",
+  cancel:
+    "The review is cancelled. A running agent stops within about 20 seconds.",
+};
+const errors: Record<string, string> = {
+  forbidden: "Only an account owner or organization admin can control reviews.",
+  conflict:
+    "The review changed state, or a newer review of this pull request exists. Reload the page.",
+  api: "Cannot reach the CroCode API. Try again.",
+};
+
 export default async function ReviewPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ done?: string; error?: string }>;
 }) {
   const { id } = await params;
+  const { done, error } = await searchParams;
   if (!validReviewId(id)) notFound();
   const {
     review,
@@ -71,10 +94,33 @@ export default async function ReviewPage({
   const state = pull
     ? pullState[pull.state === "open" && pull.draft ? "draft" : pull.state]
     : null;
+  const failure = explainReview(review);
+  // Only the newest review of a pull request can run again.
+  const newest = timeline[0]?.id === review.id;
+  const showControls =
+    installation.can_admin &&
+    (canCancel(review.status) || (canRetry(review.status) && newest));
+  const tokens =
+    review.input_tokens === null && review.output_tokens === null
+      ? "Not reported"
+      : `${formatCount(review.input_tokens) ?? "–"} in · ${formatCount(review.output_tokens) ?? "–"} out`;
   const details = [
     ["Agent", review.agent ?? "Not picked yet"],
     ["Model", review.model ?? "Agent default"],
     ["Duration", formatDuration(review.created_at, review.finished_at) ?? "–"],
+    [
+      "Agent time",
+      formatSeconds(
+        review.agent_duration_ms === null
+          ? null
+          : review.agent_duration_ms / 1000,
+      ) ?? "–",
+    ],
+    ["Tokens", tokens],
+    [
+      "Cached input",
+      formatCount(review.cached_input_tokens) ?? "Not reported",
+    ],
     ["Attempts", String(review.attempts)],
     ["Queued", formatTime(review.created_at)],
     [
@@ -114,12 +160,32 @@ export default async function ReviewPage({
           </>
         }
         actions={
-          <Button variant="outline" render={<a href={pullUrl} />}>
-            View on GitHub
-            <ExternalLink aria-hidden="true" />
-          </Button>
+          <>
+            {showControls && (
+              <ReviewControls
+                id={review.id}
+                retry={canRetry(review.status) && newest}
+                cancel={canCancel(review.status)}
+              />
+            )}
+            <Button variant="outline" render={<a href={pullUrl} />}>
+              View on GitHub
+              <ExternalLink aria-hidden="true" />
+            </Button>
+          </>
         }
       />
+
+      {error && errors[error] && (
+        <Alert variant="error" role="alert">
+          <AlertDescription>{errors[error]}</AlertDescription>
+        </Alert>
+      )}
+      {!error && done && notices[done] && (
+        <Alert variant="success" role="status">
+          <AlertDescription>{notices[done]}</AlertDescription>
+        </Alert>
+      )}
 
       {pull && (
         <section
@@ -160,13 +226,26 @@ export default async function ReviewPage({
         </section>
       )}
 
-      {review.error && (
-        <Alert variant="error">
+      {failure && (
+        <Alert variant={review.status === "failed" ? "error" : "info"}>
           <AlertTriangle />
-          <AlertTitle>Review error</AlertTitle>
-          {/* Agent output is untrusted: render it as plain text, never as HTML. */}
-          <AlertDescription className="whitespace-pre-wrap break-words font-mono text-xs">
-            {review.error}
+          <AlertTitle>{failure.title}</AlertTitle>
+          <AlertDescription>
+            <p>
+              {failure.detail}
+              {failure.action && ` ${failure.action}`}
+            </p>
+            {review.error && (
+              <details className="mt-1 w-full">
+                <summary className="w-fit cursor-pointer rounded-sm text-xs">
+                  Error details
+                </summary>
+                {/* Agent output is untrusted: render it as plain text, never as HTML. */}
+                <p className="mt-1 whitespace-pre-wrap break-words font-mono text-xs">
+                  {review.error}
+                </p>
+              </details>
+            )}
           </AlertDescription>
         </Alert>
       )}
@@ -290,12 +369,16 @@ export default async function ReviewPage({
                       {formatDuration(run.created_at, run.finished_at) &&
                         ` · ${formatDuration(run.created_at, run.finished_at)}`}
                     </p>
-                    {run.error && (
+                    {explainReview(run) && (
                       <p
-                        className="mt-1 truncate font-mono text-xs text-destructive-foreground"
-                        title={run.error}
+                        className={cn(
+                          "mt-1 text-xs",
+                          run.status === "failed"
+                            ? "text-destructive-foreground"
+                            : "text-muted-foreground",
+                        )}
                       >
-                        {run.error}
+                        {explainReview(run)?.title}
                       </p>
                     )}
                   </div>

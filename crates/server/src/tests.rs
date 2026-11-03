@@ -256,7 +256,9 @@ async fn heartbeat_stops_after_cancel(pool: PgPool) {
     db::claim_review(&pool, "worker", 1).await.unwrap().unwrap();
     assert!(db::heartbeat(&pool, id, "worker").await.unwrap());
     assert!(!db::heartbeat(&pool, id, "other").await.unwrap());
-    db::cancel_pr_reviews(&pool, 10, 1, None).await.unwrap();
+    db::cancel_pr_reviews(&pool, 10, 1, None, "superseded")
+        .await
+        .unwrap();
     assert!(!db::heartbeat(&pool, id, "worker").await.unwrap());
     db::release_review(&pool, id, "worker").await.unwrap();
     assert_eq!(
@@ -399,7 +401,7 @@ fn finding(fingerprint: &str, published: bool) -> db::NewFinding<'_> {
 
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "needs DATABASE_URL"]
-async fn findings_replace_on_retry_and_dedupe_only_published_in_same_pr(pool: PgPool) {
+async fn findings_retry_keeps_published_rows_and_dedupes_in_same_pr(pool: PgPool) {
     installation(&pool, 1).await;
     let id = enqueue(&pool, 1, 1).await;
     let other_pr = enqueue(&pool, 1, 2).await;
@@ -411,48 +413,85 @@ async fn findings_replace_on_retry_and_dedupe_only_published_in_same_pr(pool: Pg
         id,
         10,
         1,
-        &[finding("old", true), finding("unpublished", false)],
+        &[finding("posted", true), finding("unpublished", false)],
         &[],
     )
     .await
     .unwrap();
     assert_eq!(db::review_contents(&pool, id).await.unwrap().0.len(), 2);
     assert_eq!(
-        db::published_fingerprints(&pool, 10, 1).await.unwrap(),
-        ["old".into()].into()
+        db::published_fingerprints(&pool, 10, 1, Uuid::nil())
+            .await
+            .unwrap(),
+        ["posted".into()].into()
     );
     assert!(
-        db::published_fingerprints(&pool, 20, 1)
+        db::published_fingerprints(&pool, 20, 1, Uuid::nil())
             .await
             .unwrap()
             .is_empty()
     );
-    db::insert_findings(&pool, id, 10, 1, &[finding("new", true)], &[])
-        .await
-        .unwrap();
-    let rows = db::review_contents(&pool, id).await.unwrap().0;
-    assert_eq!(rows.len(), 1);
-    assert_eq!(
-        (
-            rows[0].path.as_str(),
-            rows[0].start_line,
-            rows[0].line,
-            rows[0].published
-        ),
-        ("src/login.rs", Some(3), 4, true)
+    // A retried review does not count its own posts as seen elsewhere.
+    assert!(
+        db::published_fingerprints(&pool, 10, 1, id)
+            .await
+            .unwrap()
+            .is_empty()
     );
     assert_eq!(
-        db::published_fingerprints(&pool, 10, 1).await.unwrap(),
-        ["new".into()].into()
+        db::review_published_fingerprints(&pool, id).await.unwrap(),
+        ["posted".into()].into()
+    );
+
+    // The retry replaces unpublished rows and keeps the record of what
+    // GitHub received.
+    db::insert_findings(&pool, id, 10, 1, &[finding("retry", false)], &[])
+        .await
+        .unwrap();
+    let mut rows: Vec<(String, bool)> = db::review_contents(&pool, id)
+        .await
+        .unwrap()
+        .0
+        .into_iter()
+        .map(|f| (f.title, f.published))
+        .collect();
+    rows.sort();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().any(|(_, published)| *published));
+    assert!(rows.iter().any(|(_, published)| !*published));
+    assert_eq!(
+        db::published_fingerprints(&pool, 10, 1, Uuid::nil())
+            .await
+            .unwrap(),
+        ["posted".into()].into()
     );
     assert_eq!(
         db::review_contents(&pool, other_pr).await.unwrap().0.len(),
         1
     );
-    db::insert_findings(&pool, id, 10, 1, &[], &[])
-        .await
-        .unwrap();
-    assert!(db::review_contents(&pool, id).await.unwrap().0.is_empty());
+    // Posting marks exactly the posted findings and saves the review ID.
+    db::insert_findings(
+        &pool,
+        id,
+        10,
+        1,
+        &[finding("sent", false), finding("kept", false)],
+        &[],
+    )
+    .await
+    .unwrap();
+    db::mark_published(&pool, id, 99, &["sent"]).await.unwrap();
+    assert_eq!(
+        db::review_published_fingerprints(&pool, id).await.unwrap(),
+        ["posted".into(), "sent".into()].into()
+    );
+    let github_review_id: Option<i64> =
+        sqlx::query_scalar("SELECT github_review_id FROM reviews WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(github_review_id, Some(99));
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -775,6 +814,8 @@ async fn agent_models_replace_and_show_only_enabled_agents(pool: PgPool) {
     db::save_agent_models(&pool, "retired", &[model("x")])
         .await
         .unwrap();
+    // A failed check keeps the models of the last success.
+    db::mark_agent_unavailable(&pool, "codex").await.unwrap();
     let mut state = state(pool);
     let mut settings = Settings::for_test();
     settings.agents = vec![crate::agents::Agent::Codex, crate::agents::Agent::Claude];
@@ -808,12 +849,15 @@ async fn agent_models_replace_and_show_only_enabled_agents(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    let checked_at = body["health"]["codex"]["checked_at"].clone();
+    assert!(checked_at.is_string());
     assert_eq!(
         body,
         json!({
             "agents": ["codex", "claude"],
             "default": "codex",
             "models": {"codex": [{"id": "gpt-6", "name": "gpt-6"}], "claude": []},
+            "health": {"codex": {"available": false, "checked_at": checked_at}, "claude": null},
         })
     );
 }
@@ -861,4 +905,331 @@ async fn vulnerability_access_and_page_validation_need_no_external_io() {
             .unwrap();
         assert_eq!(response.status(), status, "{path}");
     }
+}
+
+fn with_access(state: &AppState, token: &str, installations: &[(i64, bool)]) {
+    let key: [u8; 32] = <Sha256 as sha2::Digest>::digest(token.as_bytes()).into();
+    state.auth.put(
+        key,
+        crate::api::Access {
+            user: crate::github::User {
+                id: 1,
+                login: "octocat".into(),
+            },
+            installations: installations.iter().copied().collect(),
+        },
+    );
+}
+
+async fn call(state: &AppState, method: &str, path: &str, token: &str) -> (StatusCode, Value) {
+    let response = router(state.clone())
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), 65536).await.unwrap();
+    (status, serde_json::from_slice(&body).unwrap_or(Value::Null))
+}
+
+async fn enqueue_sha(pool: &PgPool, sha: &str) -> Uuid {
+    db::enqueue_review(
+        pool,
+        &db::NewReview {
+            installation_id: 1,
+            repo_id: 10,
+            repo_full_name: "acme/api",
+            pr_number: 1,
+            pr_title: "Fix login",
+            head_sha: sha,
+            base_sha: "base",
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap()
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "needs DATABASE_URL"]
+async fn review_controls_cancel_and_retry_only_valid_reviews(pool: PgPool) {
+    installation(&pool, 1).await;
+    let first = enqueue_sha(&pool, "head1").await;
+    assert!(!db::requeue_review(&pool, first).await.unwrap());
+    assert!(db::cancel_review(&pool, first).await.unwrap());
+    assert!(!db::cancel_review(&pool, first).await.unwrap());
+    let row = db::review(&pool, first).await.unwrap().unwrap().0;
+    assert_eq!(
+        (row.status.as_str(), row.error.as_deref()),
+        ("cancelled", Some("cancelled from the dashboard"))
+    );
+
+    assert!(db::requeue_review(&pool, first).await.unwrap());
+    let row = db::review(&pool, first).await.unwrap().unwrap().0;
+    assert_eq!(
+        (row.status.as_str(), row.attempts, row.error),
+        ("queued", 0, None)
+    );
+
+    // Cancelling a running review takes the lease away from its worker.
+    db::claim_review(&pool, "worker", 1).await.unwrap().unwrap();
+    db::set_review_agent(&pool, first, "worker", "claude", Some("opus"))
+        .await
+        .unwrap();
+    db::mark_published(&pool, first, 77, &[]).await.unwrap();
+    assert!(db::cancel_review(&pool, first).await.unwrap());
+    assert!(!db::heartbeat(&pool, first, "worker").await.unwrap());
+    // The stopping worker still holds the lease, so a retry must wait.
+    assert!(!db::requeue_review(&pool, first).await.unwrap());
+    db::finish_review(
+        &pool,
+        first,
+        "worker",
+        &db::Finish {
+            status: "succeeded",
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db::review(&pool, first).await.unwrap().unwrap().0.status,
+        "cancelled"
+    );
+    db::release_lock(&pool, first, "other").await.unwrap();
+    assert!(!db::requeue_review(&pool, first).await.unwrap());
+    db::release_lock(&pool, first, "worker").await.unwrap();
+    assert!(db::requeue_review(&pool, first).await.unwrap());
+    let (github_review_id, agent): (Option<i64>, Option<String>) =
+        sqlx::query_as("SELECT github_review_id, agent FROM reviews WHERE id = $1")
+            .bind(first)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((github_review_id, agent), (Some(77), None));
+
+    // A newer commit makes the old review final and blocks its retry.
+    let second = enqueue_sha(&pool, "head2").await;
+    assert_eq!(
+        db::review(&pool, first).await.unwrap().unwrap().0.status,
+        "cancelled"
+    );
+    assert!(!db::requeue_review(&pool, first).await.unwrap());
+    sqlx::query("UPDATE reviews SET status = 'failed', error = 'worker lost' WHERE id = $1")
+        .bind(second)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(!db::requeue_review(&pool, first).await.unwrap());
+
+    let state = state(pool.clone());
+    with_access(&state, "admin", &[(1, true)]);
+    with_access(&state, "member", &[(1, false)]);
+    with_access(&state, "stranger", &[(2, true)]);
+    let retry = format!("/api/v1/reviews/{second}/retry");
+    let cancel = format!("/api/v1/reviews/{second}/cancel");
+    assert_eq!(
+        call(&state, "POST", &retry, "stranger").await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(&state, "POST", &retry, "member").await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        call(&state, "POST", &cancel, "admin").await.0,
+        StatusCode::CONFLICT
+    );
+    let (status, body) = call(&state, "POST", &retry, "admin").await;
+    assert_eq!(
+        (status, body["status"].as_str()),
+        (StatusCode::OK, Some("queued"))
+    );
+    assert_eq!(
+        call(&state, "POST", &retry, "admin").await.0,
+        StatusCode::CONFLICT
+    );
+    let (status, body) = call(&state, "POST", &cancel, "admin").await;
+    assert_eq!(
+        (status, body["status"].as_str()),
+        (StatusCode::OK, Some("cancelled"))
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "needs DATABASE_URL"]
+async fn usage_is_stored_and_grouped_by_agent(pool: PgPool) {
+    installation(&pool, 1).await;
+    let done = enqueue(&pool, 1, 1).await;
+    let failed = enqueue(&pool, 1, 2).await;
+    for (id, agent) in [(done, "claude"), (failed, "codex")] {
+        let job = db::claim_review(&pool, "worker", 5).await.unwrap().unwrap();
+        assert_eq!(job.id, id);
+        db::set_review_agent(&pool, id, "worker", agent, None)
+            .await
+            .unwrap();
+    }
+    db::finish_review(
+        &pool,
+        done,
+        "worker",
+        &db::Finish {
+            status: "succeeded",
+            agent: Some("claude"),
+            model: Some("claude-opus-5-5"),
+            agent_ms: Some(4_000),
+            input_tokens: Some(1_000),
+            cached_input_tokens: Some(600),
+            output_tokens: Some(50),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    db::finish_review(
+        &pool,
+        failed,
+        "worker",
+        &db::Finish {
+            status: "failed",
+            error: Some("agent timed out after 900s"),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let row = db::review(&pool, done).await.unwrap().unwrap().0;
+    assert_eq!(
+        (
+            row.agent_duration_ms,
+            row.input_tokens,
+            row.cached_input_tokens,
+            row.output_tokens
+        ),
+        (Some(4_000), Some(1_000), Some(600), Some(50))
+    );
+    let stats = db::stats(&pool, 1).await.unwrap();
+    let agents: Vec<(&str, i64, i64, i64, i64, i64)> = stats
+        .agents
+        .iter()
+        .map(|a| {
+            (
+                a.name.as_str(),
+                a.reviews,
+                a.succeeded,
+                a.failed,
+                a.usage_reviews,
+                a.input_tokens,
+            )
+        })
+        .collect();
+    assert_eq!(
+        agents,
+        [("claude", 1, 1, 0, 1, 1_000), ("codex", 1, 0, 1, 0, 0)]
+    );
+    assert_eq!(stats.agents[0].median_agent_secs, Some(4.0));
+    assert_eq!(stats.agents[0].models, ["claude-opus-5-5"]);
+    assert!(stats.agents[1].models.is_empty());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "needs DATABASE_URL"]
+async fn digest_opt_in_claims_once_and_hides_the_url(pool: PgPool) {
+    installation(&pool, 1).await;
+    installation(&pool, 2).await;
+    assert!(db::claim_digest(&pool).await.unwrap().is_none());
+    let url = "https://hooks.example.com/services/secret-path";
+    db::update_settings(&pool, 1, true, None, None, Some(Some(url)))
+        .await
+        .unwrap();
+    let job = db::claim_digest(&pool).await.unwrap().unwrap();
+    assert_eq!((job.id, job.digest_webhook_url.as_str()), (1, url));
+    assert!(db::claim_digest(&pool).await.unwrap().is_none());
+    db::finish_digest(&pool, &job, Err("webhook returned HTTP 404"))
+        .await
+        .unwrap();
+    let i = db::installation(&pool, 1).await.unwrap().unwrap();
+    assert_eq!(i.digest_error.as_deref(), Some("webhook returned HTTP 404"));
+    assert!(i.digest_sent_at.is_none());
+
+    // A failed send waits an hour before the next attempt.
+    assert!(db::claim_digest(&pool).await.unwrap().is_none());
+    sqlx::query("UPDATE installations SET digest_attempted_at = now() - interval '2 hours'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let job = db::claim_digest(&pool).await.unwrap().unwrap();
+    let covered = Utc::now() - chrono::Duration::minutes(5);
+    db::finish_digest(&pool, &job, Ok(covered)).await.unwrap();
+    let i = db::installation(&pool, 1).await.unwrap().unwrap();
+    assert!(i.digest_error.is_none());
+    assert_eq!(
+        i.digest_sent_at.map(|t| t.timestamp_micros()),
+        Some(covered.timestamp_micros()),
+        "The next window starts where this read started"
+    );
+    sqlx::query("UPDATE installations SET digest_attempted_at = now() - interval '2 hours'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(db::claim_digest(&pool).await.unwrap().is_none());
+
+    // A result for an old URL is dropped after the admin changes it.
+    let other = "https://hooks.example.com/services/other";
+    db::update_settings(&pool, 1, true, None, None, Some(Some(other)))
+        .await
+        .unwrap();
+    db::finish_digest(&pool, &job, Err("old")).await.unwrap();
+    let i = db::installation(&pool, 1).await.unwrap().unwrap();
+    assert!(i.digest_error.is_none() && i.digest_attempted_at.is_none());
+    // A new URL gets its first digest at once.
+    assert!(i.digest_sent_at.is_none());
+    assert_eq!(db::claim_digest(&pool).await.unwrap().unwrap().id, 1);
+
+    let state = state(pool.clone());
+    with_access(&state, "admin", &[(1, true)]);
+    for bad in [
+        "http://hooks.example.com/x",
+        "https://10.0.0.1/x",
+        "https://localhost/x",
+    ] {
+        let response = router(state.clone())
+            .oneshot(
+                Request::patch("/api/v1/installations/1/settings")
+                    .header("authorization", "Bearer admin")
+                    .header("content-type", "application/json")
+                    .body(Body::from(json!({ "digest_webhook_url": bad }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
+    }
+    let (status, body) = call(&state, "GET", "/api/v1/installations/1", "admin").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["digest"]["enabled"], true);
+    assert_eq!(body["digest"]["webhook_host"], "hooks.example.com");
+    assert!(!body.to_string().contains("services/"));
+
+    db::update_settings(&pool, 1, true, None, None, Some(None))
+        .await
+        .unwrap();
+    let i = db::installation(&pool, 1).await.unwrap().unwrap();
+    assert!(i.digest_webhook_url.is_none() && i.digest_sent_at.is_none());
+    // `None` leaves the digest unchanged.
+    db::update_settings(&pool, 2, true, None, None, Some(Some(url)))
+        .await
+        .unwrap();
+    db::update_settings(&pool, 2, false, None, None, None)
+        .await
+        .unwrap();
+    let i = db::installation(&pool, 2).await.unwrap().unwrap();
+    assert_eq!(i.digest_webhook_url.as_deref(), Some(url));
 }

@@ -165,6 +165,8 @@ pub fn command(
                     "read-only",
                     "--skip-git-repo-check",
                     "--ephemeral",
+                    // JSONL events on stdout carry token usage and errors.
+                    "--json",
                     "--ignore-user-config",
                     "--ignore-rules",
                     "--color",
@@ -239,9 +241,13 @@ pub fn parse_output(agent: Agent, stdout: &str, result_file: Option<&str>) -> Re
             }
         }
         Agent::Codex => {
-            let text = result_file
-                .filter(|t| !t.trim().is_empty())
-                .ok_or_else(|| anyhow!("codex wrote no final message"))?;
+            let text =
+                result_file
+                    .filter(|t| !t.trim().is_empty())
+                    .ok_or_else(|| match codex_error(stdout) {
+                        Some(message) => anyhow!("codex error: {}", short(&message)),
+                        None => anyhow!("codex wrote no final message"),
+                    })?;
             extract_json_object(text).context("codex final message has no JSON object")?
         }
         Agent::OpenCode => {
@@ -271,6 +277,138 @@ pub fn parse_output(agent: Agent, stdout: &str, result_file: Option<&str>) -> Re
         }
     };
     serde_json::from_value(value).context("agent JSON does not match the review schema")
+}
+
+/// The last error message in Codex JSONL events.
+fn codex_error(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter_map(|event| match event["type"].as_str()? {
+            "error" => event["message"].as_str().map(str::to_owned),
+            "turn.failed" => event.pointer("/error/message")?.as_str().map(str::to_owned),
+            _ => None,
+        })
+        .next_back()
+}
+
+/// Token usage that an agent CLI reports. Input counts include cached input.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Usage {
+    pub input_tokens: Option<i64>,
+    pub cached_input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    /// The model that used the most tokens, when the CLI names it.
+    pub model: Option<String>,
+}
+
+impl Usage {
+    fn sum_opt(a: Option<i64>, b: Option<i64>) -> Option<i64> {
+        match (a, b) {
+            (None, None) => None,
+            (a, b) => Some(a.unwrap_or(0).saturating_add(b.unwrap_or(0))),
+        }
+    }
+
+    /// Adds another run, such as a fallback agent run.
+    pub fn add(&mut self, other: Usage) {
+        self.input_tokens = Self::sum_opt(self.input_tokens, other.input_tokens);
+        self.cached_input_tokens =
+            Self::sum_opt(self.cached_input_tokens, other.cached_input_tokens);
+        self.output_tokens = Self::sum_opt(self.output_tokens, other.output_tokens);
+        if other.model.is_some() {
+            self.model = other.model;
+        }
+    }
+}
+
+fn tokens(value: &Value, pointer: &str) -> Option<i64> {
+    value.pointer(pointer)?.as_i64().filter(|n| *n >= 0)
+}
+
+/// Reads token usage from agent stdout. Fields the CLI does not report stay
+/// `None`. Formats:
+/// - Claude: `modelUsage` per model, or `usage`, in the result envelope.
+/// - Codex: `usage` of each `turn.completed` event. Input includes cached input.
+/// - OpenCode: `part.tokens` of each `step_finish` event.
+pub fn parse_usage(agent: Agent, stdout: &str) -> Usage {
+    let mut usage = Usage::default();
+    match agent {
+        Agent::Claude => {
+            let Ok(envelope) = serde_json::from_str::<Value>(stdout.trim()) else {
+                return usage;
+            };
+            if let Some(models) = envelope["modelUsage"].as_object().filter(|m| !m.is_empty()) {
+                let mut largest = 0;
+                for (model, m) in models {
+                    let cached = tokens(m, "/cacheReadInputTokens");
+                    let input = [
+                        tokens(m, "/inputTokens"),
+                        tokens(m, "/cacheCreationInputTokens"),
+                    ]
+                    .into_iter()
+                    .fold(cached, Usage::sum_opt);
+                    let output = tokens(m, "/outputTokens");
+                    let total = input.unwrap_or(0) + output.unwrap_or(0);
+                    usage.add(Usage {
+                        input_tokens: input,
+                        cached_input_tokens: cached,
+                        output_tokens: output,
+                        model: None,
+                    });
+                    if total >= largest && valid_model(model) {
+                        largest = total;
+                        usage.model = Some(model.clone());
+                    }
+                }
+            } else if envelope["usage"].is_object() {
+                let cached = tokens(&envelope, "/usage/cache_read_input_tokens");
+                usage.input_tokens = [
+                    tokens(&envelope, "/usage/input_tokens"),
+                    tokens(&envelope, "/usage/cache_creation_input_tokens"),
+                ]
+                .into_iter()
+                .fold(cached, Usage::sum_opt);
+                usage.cached_input_tokens = cached;
+                usage.output_tokens = tokens(&envelope, "/usage/output_tokens");
+            }
+        }
+        Agent::Codex | Agent::OpenCode => {
+            for event in stdout
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            {
+                let run = match (agent, event["type"].as_str()) {
+                    (Agent::Codex, Some("turn.completed")) => Usage {
+                        input_tokens: tokens(&event, "/usage/input_tokens"),
+                        cached_input_tokens: tokens(&event, "/usage/cached_input_tokens"),
+                        output_tokens: tokens(&event, "/usage/output_tokens"),
+                        model: None,
+                    },
+                    (Agent::OpenCode, Some("step_finish")) => {
+                        let cached = tokens(&event, "/part/tokens/cache/read");
+                        Usage {
+                            input_tokens: [
+                                tokens(&event, "/part/tokens/input"),
+                                tokens(&event, "/part/tokens/cache/write"),
+                            ]
+                            .into_iter()
+                            .fold(cached, Usage::sum_opt),
+                            cached_input_tokens: cached,
+                            output_tokens: Usage::sum_opt(
+                                tokens(&event, "/part/tokens/output"),
+                                tokens(&event, "/part/tokens/reasoning"),
+                            ),
+                            model: None,
+                        }
+                    }
+                    _ => continue,
+                };
+                usage.add(run);
+            }
+        }
+    }
+    usage
 }
 
 fn short(text: &str) -> String {
@@ -306,6 +444,7 @@ mod tests {
 
         let (codex, _) = command(Agent::Codex, None, &paths(), false);
         assert!(codex.windows(2).any(|w| w == ["--sandbox", "read-only"]));
+        assert!(codex.iter().any(|arg| arg == "--json"));
         assert_eq!(codex.last().unwrap(), "-");
 
         let (opencode, env) = command(Agent::OpenCode, None, &paths(), false);
@@ -385,6 +524,68 @@ mod tests {
         .unwrap();
         assert_eq!(review.summary, "c");
         assert!(parse_output(Agent::Codex, "", None).is_err());
+    }
+
+    #[test]
+    fn usage_from_each_cli() {
+        // Shapes from Claude Code 2.1.310 and Codex 0.166.0 output on 2026-11-02.
+        let claude = r#"{"type":"result","usage":{"input_tokens":2,"cache_creation_input_tokens":1250,"cache_read_input_tokens":1670,"output_tokens":4},
+            "modelUsage":{"claude-sonnet-5-5":{"inputTokens":2,"outputTokens":4,"cacheReadInputTokens":1670,"cacheCreationInputTokens":1250},
+                          "claude-haiku-5-5":{"inputTokens":10,"outputTokens":1}}}"#;
+        assert_eq!(
+            parse_usage(Agent::Claude, claude),
+            Usage {
+                input_tokens: Some(2932),
+                cached_input_tokens: Some(1670),
+                output_tokens: Some(5),
+                model: Some("claude-sonnet-5-5".into()),
+            }
+        );
+        let envelope_only =
+            r#"{"usage":{"input_tokens":5,"cache_read_input_tokens":3,"output_tokens":7}}"#;
+        assert_eq!(
+            parse_usage(Agent::Claude, envelope_only),
+            Usage {
+                input_tokens: Some(8),
+                cached_input_tokens: Some(3),
+                output_tokens: Some(7),
+                model: None,
+            }
+        );
+        let codex = concat!(
+            r#"{"type":"thread.started","thread_id":"x"}"#,
+            "\n",
+            r#"{"type":"turn.completed","usage":{"input_tokens":24388,"cached_input_tokens":12288,"output_tokens":5}}"#,
+            "\n",
+            r#"{"type":"turn.completed","usage":{"input_tokens":12,"cached_input_tokens":0,"output_tokens":1}}"#,
+        );
+        let usage = parse_usage(Agent::Codex, codex);
+        assert_eq!(usage.input_tokens, Some(24400));
+        assert_eq!(usage.cached_input_tokens, Some(12288));
+        assert_eq!(usage.output_tokens, Some(6));
+        let opencode = r#"{"type":"step_finish","part":{"type":"step-finish","tokens":{"input":10,"output":4,"reasoning":2,"cache":{"read":30,"write":5}}}}"#;
+        assert_eq!(
+            parse_usage(Agent::OpenCode, opencode),
+            Usage {
+                input_tokens: Some(45),
+                cached_input_tokens: Some(30),
+                output_tokens: Some(6),
+                model: None,
+            }
+        );
+        for agent in [Agent::Claude, Agent::Codex, Agent::OpenCode] {
+            assert_eq!(parse_usage(agent, "not json"), Usage::default());
+        }
+        let mut total = Usage::default();
+        total.add(Usage::default());
+        assert_eq!(total, Usage::default());
+    }
+
+    #[test]
+    fn codex_errors_come_from_json_events() {
+        let out = r#"{"type":"turn.failed","error":{"message":"You've hit your usage limit"}}"#;
+        let err = parse_output(Agent::Codex, out, None).unwrap_err();
+        assert!(err.to_string().contains("usage limit"), "{err}");
     }
 
     #[test]

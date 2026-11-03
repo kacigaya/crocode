@@ -15,6 +15,7 @@ use tracing::info;
 mod agents;
 mod api;
 mod db;
+mod digest;
 mod github;
 mod models;
 mod review;

@@ -12,7 +12,7 @@ use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, patch};
+use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -39,6 +39,8 @@ pub fn router() -> Router<AppState> {
         .route("/installations/{id}/vulnerabilities", get(vulnerabilities))
         .route("/reviews/{id}", get(get_review))
         .route("/reviews/{id}/pull", get(review_pull))
+        .route("/reviews/{id}/retry", post(retry_review))
+        .route("/reviews/{id}/cancel", post(cancel_review))
 }
 
 pub struct ApiError(StatusCode, String);
@@ -200,22 +202,34 @@ async fn me(access: Access) -> ApiResult<github::User> {
 /// Needs a token: OpenCode model lists show which providers have keys.
 async fn agents(State(state): State<AppState>, _: Access) -> ApiResult<serde_json::Value> {
     let names: Vec<&str> = state.settings.agents.iter().map(|a| a.name()).collect();
-    // Only enabled agents. An agent without a stored list maps to `[]`.
-    let stored: HashMap<String, serde_json::Value> =
-        db::agent_models(&state.db).await?.into_iter().collect();
-    let models: serde_json::Map<String, serde_json::Value> = names
-        .iter()
-        .map(|name| {
-            (
-                name.to_string(),
-                stored.get(*name).cloned().unwrap_or(json!([])),
-            )
-        })
+    // Only enabled agents. An agent without a stored list maps to `[]`, and
+    // to `null` health until its first check.
+    let stored: HashMap<String, db::AgentModels> = db::agent_models(&state.db)
+        .await?
+        .into_iter()
+        .map(|row| (row.agent.clone(), row))
         .collect();
+    let mut models = serde_json::Map::new();
+    let mut health = serde_json::Map::new();
+    for name in &names {
+        let row = stored.get(*name);
+        models.insert(
+            name.to_string(),
+            row.map_or(json!([]), |r| r.models.clone()),
+        );
+        health.insert(
+            name.to_string(),
+            row.map_or(
+                serde_json::Value::Null,
+                |r| json!({ "available": r.available, "checked_at": r.checked_at }),
+            ),
+        );
+    }
     Ok(Json(json!({
         "agents": names,
         "default": state.settings.default_agent.name(),
         "models": models,
+        "health": health,
     })))
 }
 
@@ -230,6 +244,7 @@ struct InstallationView {
     suspended: bool,
     created_at: DateTime<Utc>,
     settings: SettingsView,
+    digest: DigestView,
     can_admin: bool,
 }
 
@@ -238,6 +253,16 @@ struct SettingsView {
     enabled: bool,
     agent: Option<String>,
     model: Option<String>,
+}
+
+/// The webhook URL is a secret. Only its host is shown.
+#[derive(Serialize)]
+struct DigestView {
+    enabled: bool,
+    webhook_host: Option<String>,
+    sent_at: Option<DateTime<Utc>>,
+    attempted_at: Option<DateTime<Utc>>,
+    error: Option<String>,
 }
 
 fn view(i: db::Installation, can_admin: bool) -> InstallationView {
@@ -253,6 +278,16 @@ fn view(i: db::Installation, can_admin: bool) -> InstallationView {
             enabled: i.enabled,
             agent: i.agent,
             model: i.model,
+        },
+        digest: DigestView {
+            enabled: i.digest_webhook_url.is_some(),
+            webhook_host: i
+                .digest_webhook_url
+                .as_deref()
+                .and_then(crate::digest::webhook_host),
+            sent_at: i.digest_sent_at,
+            attempted_at: i.digest_attempted_at,
+            error: i.digest_error,
         },
         can_admin,
     }
@@ -312,6 +347,9 @@ struct SettingsPatch {
     agent: Option<Option<String>>,
     #[serde(default, deserialize_with = "double_option")]
     model: Option<Option<String>>,
+    /// `null` turns the weekly security digest off.
+    #[serde(default, deserialize_with = "double_option")]
+    digest_webhook_url: Option<Option<String>>,
 }
 
 async fn update_settings(
@@ -350,8 +388,24 @@ async fn update_settings(
         Some(None) => None,
         None => current.model,
     };
+    let digest = match &patch.digest_webhook_url {
+        Some(Some(url)) => {
+            crate::digest::validate_webhook_url(url).map_err(unprocessable)?;
+            Some(Some(url.as_str()))
+        }
+        Some(None) => Some(None),
+        None => None,
+    };
     let enabled = patch.enabled.unwrap_or(current.enabled);
-    db::update_settings(&state.db, id, enabled, agent.as_deref(), model.as_deref()).await?;
+    db::update_settings(
+        &state.db,
+        id,
+        enabled,
+        agent.as_deref(),
+        model.as_deref(),
+        digest,
+    )
+    .await?;
     tracing::info!(installation = id, user = %access.user.login, "settings updated");
     let (installation, can_admin) = load_installation(&state, &access, id).await?;
     Ok(Json(view(installation, can_admin)))
@@ -579,4 +633,58 @@ async fn vulnerabilities(
     .await
     .map_err(github_error)?;
     Ok(Json(report))
+}
+
+/// Loads a review that the user can see and whose installation they administer.
+async fn admin_review(state: &AppState, access: &Access, id: Uuid) -> Result<(), ApiError> {
+    let not_found = || ApiError::new(StatusCode::NOT_FOUND, "review not found");
+    let (review, _) = db::review(&state.db, id).await?.ok_or_else(not_found)?;
+    match access.installations.get(&review.installation_id) {
+        None => Err(not_found()),
+        Some(false) => Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "admin access required",
+        )),
+        Some(true) => Ok(()),
+    }
+}
+
+async fn updated_review(state: &AppState, id: Uuid) -> ApiResult<db::ReviewRow> {
+    let (review, _) = db::review(&state.db, id)
+        .await?
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "review not found"))?;
+    Ok(Json(review))
+}
+
+async fn retry_review(
+    State(state): State<AppState>,
+    access: Access,
+    Path(id): Path<Uuid>,
+) -> ApiResult<db::ReviewRow> {
+    admin_review(&state, &access, id).await?;
+    if !db::requeue_review(&state.db, id).await? {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "only the newest failed or cancelled review of an idle pull request can be retried; \
+             a cancelled agent may still be stopping, so try again in a minute",
+        ));
+    }
+    tracing::info!(review = %id, user = %access.user.login, "review retried");
+    updated_review(&state, id).await
+}
+
+async fn cancel_review(
+    State(state): State<AppState>,
+    access: Access,
+    Path(id): Path<Uuid>,
+) -> ApiResult<db::ReviewRow> {
+    admin_review(&state, &access, id).await?;
+    if !db::cancel_review(&state.db, id).await? {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "only queued or running reviews can be cancelled",
+        ));
+    }
+    tracing::info!(review = %id, user = %access.user.login, "review cancelled");
+    updated_review(&state, id).await
 }

@@ -197,7 +197,12 @@ async fn on_pull_request(state: &AppState, body: &[u8]) -> anyhow::Result<&'stat
     match e.action.as_str() {
         "opened" | "reopened" | "synchronize" | "ready_for_review" => {}
         "closed" | "converted_to_draft" => {
-            db::cancel_pr_reviews(&state.db, e.repository.id, pr.number, None).await?;
+            let reason = if e.action == "closed" {
+                "pull request closed"
+            } else {
+                "pull request converted to draft"
+            };
+            db::cancel_pr_reviews(&state.db, e.repository.id, pr.number, None, reason).await?;
             return Ok("reviews cancelled");
         }
         _ => return Ok("ignored action"),

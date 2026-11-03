@@ -12,8 +12,9 @@ const errors: Record<string, string> = {
   forbidden: "Only an account owner or organization admin can change settings.",
   agent: "Select an available agent.",
   model: "Enter a model, or leave the field empty.",
+  digest_url: "Enter a webhook URL to turn on the weekly security digest.",
   validation:
-    "The API did not accept these settings. Check the agent and model.",
+    "The API did not accept these settings. Check the agent, the model, and that the webhook URL uses https and a public host name.",
   api: "Cannot save settings. Check that the CroCode API is available, then try again.",
 };
 

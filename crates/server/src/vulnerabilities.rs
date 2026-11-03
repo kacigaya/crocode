@@ -120,7 +120,7 @@ pub struct RepositoryAlerts {
     pub last_success_at: Option<DateTime<Utc>>,
 }
 
-fn failure_status(error: &anyhow::Error) -> CoverageStatus {
+pub(crate) fn failure_status(error: &anyhow::Error) -> CoverageStatus {
     let Some(octocrab::Error::GitHub { source, .. }) = error.downcast_ref::<octocrab::Error>()
     else {
         return CoverageStatus::Failed;
