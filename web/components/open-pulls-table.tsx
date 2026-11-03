@@ -24,7 +24,7 @@ export function OpenPullsTable({
   webUrl: string;
 }) {
   return (
-    <Table>
+    <Table aria-label="Open pull requests">
       <TableHeader>
         <TableRow>
           <TableHead className="ps-4">Pull request</TableHead>

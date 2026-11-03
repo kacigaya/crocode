@@ -35,7 +35,7 @@ export default async function InstallationSettingsPage({
   return (
     <div className="max-w-2xl space-y-4">
       {error && errors[error] && (
-        <Alert variant="error" role="alert">
+        <Alert id="settings-error" variant="error" role="alert">
           <AlertDescription>{errors[error]}</AlertDescription>
         </Alert>
       )}
@@ -44,7 +44,7 @@ export default async function InstallationSettingsPage({
           <AlertDescription>Settings saved.</AlertDescription>
         </Alert>
       )}
-      <SettingsForm installation={installation} agents={agents} />
+      <SettingsForm installation={installation} agents={agents} error={error} />
     </div>
   );
 }

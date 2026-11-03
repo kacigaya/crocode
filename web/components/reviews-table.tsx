@@ -15,9 +15,9 @@ import type { Review } from "@/lib/types";
 /** Review runs, newest first. Each row opens its review. */
 export function ReviewsTable({ reviews }: { reviews: Review[] }) {
   return (
-    <Table>
+    <Table aria-label="Reviews">
       <TableCaption className="sr-only">
-        Reviews, newest first. Hover a time to see it in UTC.
+        Reviews, newest first. Times are in UTC.
       </TableCaption>
       <TableHeader>
         <TableRow>

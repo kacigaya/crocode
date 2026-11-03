@@ -141,7 +141,7 @@ export function VulnerabilitiesPanel({
                     security scan.
                   </p>
                 ) : (
-                  <Table>
+                  <Table aria-label={`Dependency advisories for ${repo}`}>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Advisory</TableHead>

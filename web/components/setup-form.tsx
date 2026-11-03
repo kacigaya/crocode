@@ -50,15 +50,20 @@ export function SetupForm({
     prepareManifest,
     { status: "idle" },
   );
+  const form = useRef<HTMLFormElement>(null);
   const github = useRef<HTMLFormElement>(null);
   // GitHub only accepts the manifest as a form POST from the browser.
   useEffect(() => {
     if (state.status === "ready") github.current?.submit();
+    if (state.status === "error" && state.field) {
+      const input = form.current?.elements.namedItem(state.field);
+      if (input instanceof HTMLInputElement) input.focus();
+    }
   }, [state]);
 
   return (
     <>
-      <form action={action} className="mt-8 grid gap-5">
+      <form ref={form} action={action} aria-busy={pending} className="mt-8 grid gap-5">
         {fields.map((field) => (
           <div key={field.name} className="grid gap-1.5">
             <label htmlFor={field.name} className="text-sm font-medium">
@@ -71,7 +76,8 @@ export function SetupForm({
               autoComplete={field.autoComplete}
               required={field.required}
               defaultValue={defaults[field.name]}
-              aria-describedby={`${field.name}-description`}
+              aria-invalid={(state.status === "error" && state.field === field.name) || undefined}
+              aria-describedby={`${field.name}-description${state.status === "error" && state.field === field.name ? " setup-error" : ""}`}
               spellCheck={false}
             />
             <p
@@ -82,7 +88,7 @@ export function SetupForm({
             </p>
           </div>
         ))}
-        <p role="alert" className="min-h-5 text-sm text-destructive-foreground">
+        <p id="setup-error" role="alert" className="min-h-5 text-sm text-destructive-foreground">
           {state.status === "error" ? state.message : null}
         </p>
         <Button size="lg" type="submit" loading={pending}>

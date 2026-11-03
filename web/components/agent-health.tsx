@@ -66,7 +66,7 @@ export function AgentHealthTable({
       </p>
     );
   return (
-    <Table>
+    <Table aria-label="Agent health and usage">
       <TableHeader>
         <TableRow>
           <TableHead>Agent</TableHead>

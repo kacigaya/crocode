@@ -29,7 +29,10 @@ export function Table({
         {...props}
       />
     ),
-    className: "relative w-full overflow-x-auto",
+    className: "relative w-full overflow-x-auto focus-visible:-outline-offset-2",
+    tabIndex: 0,
+    role: "region",
+    "aria-label": props["aria-label"] ?? "Table",
     "data-slot": "table-container",
     "data-variant": variant,
   };
@@ -108,6 +111,7 @@ export function TableHead({
 }: React.ComponentProps<"th">): React.ReactElement {
   return (
     <th
+      scope="col"
       className={cn(
         "h-10 whitespace-nowrap px-2.5 text-left align-middle font-medium text-muted-foreground leading-none has-[[role=checkbox]]:w-px last:has-[[role=checkbox]]:ps-0 first:has-[[role=checkbox]]:pe-0",
         className,

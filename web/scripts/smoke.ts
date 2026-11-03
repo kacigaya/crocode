@@ -505,6 +505,10 @@ try {
   assert.match(await (await get("/installations/123/vulnerabilities?view=priority")).text(), /Cannot load the priority queue/);
   vulnerabilitiesFail = false;
   console.log("Checking settings");
+  const invalidSettings = await (await get("/installations/123/settings?error=digest_url")).text();
+  assert.match(invalidSettings, /id="settings-error"/);
+  assert.match(invalidSettings, /<input[^>]*aria-invalid="true"[^>]*aria-describedby="digest-url-hint settings-error"/);
+
   response = await get("/installations/123/settings");
   const settings = await response.text();
   assert.equal(response.status, 200);
@@ -529,6 +533,9 @@ try {
   );
   assert.deepEqual(patches, [{ enabled: false, agent: "codex", model: null }]);
   assert.match(settings, /Weekly security digest/);
+  for (const label of ["enabled-label", "digest-label"]) {
+    assert.match(settings, new RegExp(`<span[^>]*role="switch"[^>]*aria-labelledby="${label}"`));
+  }
   form.set("digest", "on");
   const missingUrl = await fetch(origin + "/installations/123/settings", {
     method: "POST",

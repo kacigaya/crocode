@@ -37,9 +37,11 @@ type ModelItem = { value: string; label: string; name: string };
 export function SettingsForm({
   installation,
   agents,
+  error,
 }: {
   installation: Installation;
   agents: Agents;
+  error?: string;
 }) {
   const action = saveSettings.bind(null, String(installation.id));
   const disabled = !installation.can_admin;
@@ -56,7 +58,7 @@ export function SettingsForm({
   const [agent, setAgent] = useState(saved);
   const [model, setModel] = useState(installation.settings.model ?? "");
   const digest = installation.digest;
-  const [digestOn, setDigestOn] = useState(digest.enabled);
+  const [digestOn, setDigestOn] = useState(digest.enabled || error === "digest_url");
   const effective = agent === DEFAULT_AGENT ? agents.default : agent;
   const models: ModelItem[] = (agents.models[effective] ?? []).map((m) => ({
     value: m.id,
@@ -89,7 +91,7 @@ export function SettingsForm({
           <legend className="sr-only">Review settings</legend>
           <div className="flex items-start justify-between gap-4">
             <div>
-              <label htmlFor="enabled" className="text-sm font-medium">
+              <label id="enabled-label" htmlFor="enabled" className="text-sm font-medium">
                 Enable reviews
               </label>
               <p
@@ -101,6 +103,7 @@ export function SettingsForm({
             </div>
             <Switch
               id="enabled"
+              aria-labelledby="enabled-label"
               name="enabled"
               value="on"
               defaultChecked={installation.settings.enabled}
@@ -120,7 +123,11 @@ export function SettingsForm({
               disabled={disabled}
               required
             >
-              <SelectTrigger id="agent" aria-describedby="agent-hint">
+              <SelectTrigger
+                id="agent"
+                aria-invalid={error === "agent" || undefined}
+                aria-describedby={`agent-hint${error === "agent" ? " settings-error" : ""}`}
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectPopup>
@@ -164,7 +171,8 @@ export function SettingsForm({
                 id="model"
                 name="model"
                 placeholder={`${effective} default`}
-                aria-describedby="model-hint"
+                aria-invalid={error === "model" || undefined}
+                aria-describedby={`model-hint${error === "model" ? " settings-error" : ""}`}
                 autoComplete="off"
                 spellCheck={false}
                 className="font-mono"
@@ -204,7 +212,7 @@ export function SettingsForm({
           <legend className="sr-only">Weekly security digest</legend>
           <div className="flex items-start justify-between gap-4">
             <div>
-              <label htmlFor="digest" className="text-sm font-medium">
+              <label id="digest-label" htmlFor="digest" className="text-sm font-medium">
                 Weekly security digest
               </label>
               <p
@@ -219,6 +227,7 @@ export function SettingsForm({
             </div>
             <Switch
               id="digest"
+              aria-labelledby="digest-label"
               name="digest"
               value="on"
               checked={digestOn}
@@ -256,7 +265,8 @@ export function SettingsForm({
                 spellCheck={false}
                 required={!digest.enabled}
                 placeholder="https://hooks.slack.com/services/…"
-                aria-describedby="digest-url-hint"
+                aria-invalid={error === "digest_url" || undefined}
+                aria-describedby={`digest-url-hint${error === "digest_url" ? " settings-error" : ""}`}
                 className="font-mono"
               />
               <p id="digest-url-hint" className="text-xs text-muted-foreground">
