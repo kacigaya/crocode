@@ -15,10 +15,12 @@ ALTER TABLE agent_models
     ALTER COLUMN checked_at SET NOT NULL,
     ALTER COLUMN checked_at SET DEFAULT now();
 
--- Opt-in weekly security digest. The webhook URL is a secret: the API never
--- returns it.
+-- Opt-in weekly security digest. The webhook URL is a secret. It is stored
+-- sealed with AES-256-GCM under a key derived from the GitHub App private
+-- key, which the database never holds. The host is kept for display.
 ALTER TABLE installations
-    ADD COLUMN digest_webhook_url  TEXT,
+    ADD COLUMN digest_webhook_sealed TEXT,
+    ADD COLUMN digest_webhook_host   TEXT,
     ADD COLUMN digest_sent_at      TIMESTAMPTZ,
     ADD COLUMN digest_attempted_at TIMESTAMPTZ,
     ADD COLUMN digest_error        TEXT;

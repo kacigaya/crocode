@@ -183,8 +183,12 @@ Model IDs that contain a known secret value are dropped. Codex list runs receive
 The weekly security digest is opt-in. It sends repository names, package names, and
 advisory IDs from the worker to the webhook host that an admin chose. That host and
 its chat service receive this data.
-The webhook URL works like a password. The database stores it in plain text.
-The API never returns it, and error messages never contain it.
+The webhook URL works like a password. The database stores it sealed with AES-256-GCM.
+The key comes from the GitHub App private key through HKDF-SHA256. The database never holds that key,
+so a database dump or backup alone does not reveal the URL. The installation ID is bound to each sealed value.
+A host that holds both the database and the App private key can still read the URL.
+The database keeps the webhook host in plain text for display.
+The API never returns the URL, and error messages never contain it.
 The worker sends one HTTPS request to port 443 and follows no redirects.
 It resolves the host once and refuses the send when any address is private, loopback,
 link-local, shared, reserved, or otherwise not public. It then connects to a checked address.

@@ -277,7 +277,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
           [<code key="c">critical</code>, "15 days"], [<code key="h">high</code>, "30 days"],
           [<code key="m">medium</code>, "90 days"], [<code key="l">low</code>, "180 days"],
         ]} />
-        <p>The message names repositories, packages, and CVE or GHSA IDs. It leaves GitHub. The API never returns the webhook URL. The worker sends only to public addresses on port 443 and follows no redirects. After a failed send it tries again every hour.</p>
+        <p>The message names repositories, packages, and CVE or GHSA IDs. It leaves GitHub. The database stores the webhook URL encrypted with a key derived from the GitHub App private key, and the API never returns it. After a private key rotation, enter the URL again. The worker sends only to public addresses on port 443 and follows no redirects. After a failed send it tries again every hour.</p>
       </>,
     },
   ],

@@ -61,8 +61,9 @@ pub struct Installation {
     pub agent: Option<String>,
     pub model: Option<String>,
     pub created_at: DateTime<Utc>,
-    /// Secret. Never return it from the API.
-    pub digest_webhook_url: Option<String>,
+    /// The webhook URL, sealed. Open it only to send. See `digest::WebhookKey`.
+    pub digest_webhook_sealed: Option<String>,
+    pub digest_webhook_host: Option<String>,
     pub digest_sent_at: Option<DateTime<Utc>>,
     pub digest_attempted_at: Option<DateTime<Utc>>,
     pub digest_error: Option<String>,
@@ -71,7 +72,7 @@ pub struct Installation {
 const INSTALLATION_COLUMNS: &str =
     "id, account_id, account_login, account_type, repository_selection,
     suspended, enabled, agent, model, created_at,
-    digest_webhook_url, digest_sent_at, digest_attempted_at, digest_error";
+    digest_webhook_sealed, digest_webhook_host, digest_sent_at, digest_attempted_at, digest_error";
 
 pub struct InstallationUpsert<'a> {
     pub id: i64,
@@ -148,24 +149,25 @@ pub async fn installations(db: &Db, ids: &[i64]) -> sqlx::Result<Vec<Installatio
         .await
 }
 
-/// `digest_webhook_url`: `None` keeps the current value, `Some(None)` turns
-/// the digest off. A new URL clears the last result and sends soon.
+/// `digest`: the sealed webhook URL and its host. `None` keeps the current
+/// value, `Some(None)` turns the digest off. A new URL clears the last result and sends soon.
 pub async fn update_settings(
     db: &Db,
     id: i64,
     enabled: bool,
     agent: Option<&str>,
     model: Option<&str>,
-    digest_webhook_url: Option<Option<&str>>,
+    digest: Option<Option<(&str, &str)>>,
 ) -> sqlx::Result<()> {
     sqlx::query(
         "UPDATE installations SET enabled = $2, agent = $3, model = $4,
-            digest_webhook_url = CASE WHEN $5 THEN $6 ELSE digest_webhook_url END,
-            digest_attempted_at = CASE WHEN $5 AND $6 IS DISTINCT FROM digest_webhook_url
+            digest_webhook_sealed = CASE WHEN $5 THEN $6 ELSE digest_webhook_sealed END,
+            digest_webhook_host = CASE WHEN $5 THEN $7 ELSE digest_webhook_host END,
+            digest_attempted_at = CASE WHEN $5 AND $6 IS DISTINCT FROM digest_webhook_sealed
                                        THEN NULL ELSE digest_attempted_at END,
-            digest_error = CASE WHEN $5 AND $6 IS DISTINCT FROM digest_webhook_url
+            digest_error = CASE WHEN $5 AND $6 IS DISTINCT FROM digest_webhook_sealed
                                 THEN NULL ELSE digest_error END,
-            digest_sent_at = CASE WHEN $5 AND $6 IS DISTINCT FROM digest_webhook_url
+            digest_sent_at = CASE WHEN $5 AND $6 IS DISTINCT FROM digest_webhook_sealed
                                   THEN NULL ELSE digest_sent_at END,
             updated_at = now()
          WHERE id = $1",
@@ -174,8 +176,9 @@ pub async fn update_settings(
     .bind(enabled)
     .bind(agent)
     .bind(model)
-    .bind(digest_webhook_url.is_some())
-    .bind(digest_webhook_url.flatten())
+    .bind(digest.is_some())
+    .bind(digest.flatten().map(|(sealed, _)| sealed))
+    .bind(digest.flatten().map(|(_, host)| host))
     .execute(db)
     .await?;
     Ok(())
@@ -998,7 +1001,8 @@ pub async fn review_contents(
 pub struct DigestJob {
     pub id: i64,
     pub account_login: String,
-    pub digest_webhook_url: String,
+    /// Sealed. See `digest::WebhookKey`.
+    pub digest_webhook_sealed: String,
     pub digest_sent_at: Option<DateTime<Utc>>,
 }
 
@@ -1009,13 +1013,13 @@ pub async fn claim_digest(db: &Db) -> sqlx::Result<Option<DigestJob>> {
         "UPDATE installations SET digest_attempted_at = now()
          WHERE id = (
             SELECT id FROM installations
-            WHERE digest_webhook_url IS NOT NULL AND NOT deleted AND NOT suspended
+            WHERE digest_webhook_sealed IS NOT NULL AND NOT deleted AND NOT suspended
               AND (digest_sent_at IS NULL OR digest_sent_at <= now() - interval '7 days')
               AND (digest_attempted_at IS NULL OR digest_attempted_at <= now() - interval '1 hour')
             ORDER BY digest_attempted_at NULLS FIRST
             FOR UPDATE SKIP LOCKED
             LIMIT 1)
-         RETURNING id, account_login, digest_webhook_url, digest_sent_at",
+         RETURNING id, account_login, digest_webhook_sealed, digest_sent_at",
     )
     .fetch_optional(db)
     .await
@@ -1032,10 +1036,10 @@ pub async fn finish_digest(
     sqlx::query(
         "UPDATE installations SET digest_error = $3,
             digest_sent_at = COALESCE($4, digest_sent_at)
-         WHERE id = $1 AND digest_webhook_url = $2",
+         WHERE id = $1 AND digest_webhook_sealed = $2",
     )
     .bind(job.id)
-    .bind(&job.digest_webhook_url)
+    .bind(&job.digest_webhook_sealed)
     .bind(result.err())
     .bind(result.ok())
     .execute(db)

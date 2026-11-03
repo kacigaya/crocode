@@ -20,6 +20,7 @@ crocode-core.workspace = true
 hex.workspace = true
 hmac = "0.13"
 octocrab = "0.54"
+ring = "0.17"
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

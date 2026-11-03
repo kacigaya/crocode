@@ -185,6 +185,9 @@ same window, so no alert change is lost.
 Dismissed alerts are not counted. This is GitHub's alert inventory, not a full security scan.
 
 The worker checks for due digests every 10 minutes. After a failed send it tries again every hour.
+The database stores the webhook URL encrypted with a key derived from the GitHub App private key.
+After you rotate that private key, the worker cannot read stored URLs. The settings page then shows
+an error. Enter the webhook URL again to fix it.
 The settings page shows the last send and the last error.
 The GitHub App needs the read-only **Dependabot alerts** permission. See
 [Enable the vulnerability panel](github-app.md#enable-the-vulnerability-panel-on-an-existing-app).

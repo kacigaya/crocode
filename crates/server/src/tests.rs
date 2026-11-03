@@ -23,6 +23,7 @@ fn state(pool: PgPool) -> AppState {
         auth: Arc::default(),
         pulls: Arc::default(),
         vulnerability_checks: Arc::default(),
+        webhook_key: Arc::new(crate::digest::WebhookKey::derive(b"test-key")),
     }
 }
 
@@ -1141,22 +1142,69 @@ async fn usage_is_stored_and_grouped_by_agent(pool: PgPool) {
 
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "needs DATABASE_URL"]
-async fn digest_opt_in_claims_once_and_hides_the_url(pool: PgPool) {
+async fn digest_opt_in_claims_once_and_seals_the_url(pool: PgPool) {
     installation(&pool, 1).await;
     installation(&pool, 2).await;
     assert!(db::claim_digest(&pool).await.unwrap().is_none());
+    let state = state(pool.clone());
+    with_access(&state, "admin", &[(1, true), (2, true)]);
+    let patch = |id: i64, body: Value| {
+        let state = state.clone();
+        async move {
+            router(state)
+                .oneshot(
+                    Request::patch(format!("/api/v1/installations/{id}/settings"))
+                        .header("authorization", "Bearer admin")
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+        }
+    };
+    for bad in [
+        "http://hooks.example.com/x",
+        "https://10.0.0.1/x",
+        "https://localhost/x",
+    ] {
+        assert_eq!(
+            patch(1, json!({ "digest_webhook_url": bad })).await,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{bad}"
+        );
+    }
     let url = "https://hooks.example.com/services/secret-path";
-    db::update_settings(&pool, 1, true, None, None, Some(Some(url)))
-        .await
-        .unwrap();
+    assert_eq!(
+        patch(1, json!({ "digest_webhook_url": url })).await,
+        StatusCode::OK
+    );
+
+    // The database holds only the sealed value and the host.
+    let row: String =
+        sqlx::query_scalar("SELECT row_to_json(i)::text FROM installations i WHERE id = 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(!row.contains("secret-path"), "{row}");
     let job = db::claim_digest(&pool).await.unwrap().unwrap();
-    assert_eq!((job.id, job.digest_webhook_url.as_str()), (1, url));
+    assert_eq!(job.id, 1);
+    assert_eq!(
+        state
+            .webhook_key
+            .open(1, &job.digest_webhook_sealed)
+            .as_deref(),
+        Some(url)
+    );
+    assert_eq!(state.webhook_key.open(2, &job.digest_webhook_sealed), None);
     assert!(db::claim_digest(&pool).await.unwrap().is_none());
     db::finish_digest(&pool, &job, Err("webhook returned HTTP 404"))
         .await
         .unwrap();
     let i = db::installation(&pool, 1).await.unwrap().unwrap();
     assert_eq!(i.digest_error.as_deref(), Some("webhook returned HTTP 404"));
+    assert_eq!(i.digest_webhook_host.as_deref(), Some("hooks.example.com"));
     assert!(i.digest_sent_at.is_none());
 
     // A failed send waits an hour before the next attempt.
@@ -1181,55 +1229,43 @@ async fn digest_opt_in_claims_once_and_hides_the_url(pool: PgPool) {
         .unwrap();
     assert!(db::claim_digest(&pool).await.unwrap().is_none());
 
-    // A result for an old URL is dropped after the admin changes it.
-    let other = "https://hooks.example.com/services/other";
-    db::update_settings(&pool, 1, true, None, None, Some(Some(other)))
-        .await
-        .unwrap();
+    // A result for an old URL is dropped after the admin changes it, and the
+    // new URL gets its first digest at once.
+    assert_eq!(
+        patch(
+            1,
+            json!({ "digest_webhook_url": "https://chat.example.org/hooks/other" })
+        )
+        .await,
+        StatusCode::OK
+    );
     db::finish_digest(&pool, &job, Err("old")).await.unwrap();
     let i = db::installation(&pool, 1).await.unwrap().unwrap();
     assert!(i.digest_error.is_none() && i.digest_attempted_at.is_none());
-    // A new URL gets its first digest at once.
     assert!(i.digest_sent_at.is_none());
+    assert_eq!(i.digest_webhook_host.as_deref(), Some("chat.example.org"));
     assert_eq!(db::claim_digest(&pool).await.unwrap().unwrap().id, 1);
 
-    let state = state(pool.clone());
-    with_access(&state, "admin", &[(1, true)]);
-    for bad in [
-        "http://hooks.example.com/x",
-        "https://10.0.0.1/x",
-        "https://localhost/x",
-    ] {
-        let response = router(state.clone())
-            .oneshot(
-                Request::patch("/api/v1/installations/1/settings")
-                    .header("authorization", "Bearer admin")
-                    .header("content-type", "application/json")
-                    .body(Body::from(json!({ "digest_webhook_url": bad }).to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY, "{bad}");
-    }
     let (status, body) = call(&state, "GET", "/api/v1/installations/1", "admin").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["digest"]["enabled"], true);
-    assert_eq!(body["digest"]["webhook_host"], "hooks.example.com");
-    assert!(!body.to_string().contains("services/"));
+    assert_eq!(body["digest"]["webhook_host"], "chat.example.org");
+    assert!(!body.to_string().contains("hooks/other"));
+    assert!(!body.to_string().contains("v1:"));
 
-    db::update_settings(&pool, 1, true, None, None, Some(None))
-        .await
-        .unwrap();
+    assert_eq!(
+        patch(1, json!({ "digest_webhook_url": null })).await,
+        StatusCode::OK
+    );
     let i = db::installation(&pool, 1).await.unwrap().unwrap();
-    assert!(i.digest_webhook_url.is_none() && i.digest_sent_at.is_none());
-    // `None` leaves the digest unchanged.
-    db::update_settings(&pool, 2, true, None, None, Some(Some(url)))
-        .await
-        .unwrap();
-    db::update_settings(&pool, 2, false, None, None, None)
-        .await
-        .unwrap();
+    assert!(i.digest_webhook_sealed.is_none() && i.digest_webhook_host.is_none());
+    assert!(i.digest_sent_at.is_none());
+    // Leaving the field out keeps the digest.
+    assert_eq!(
+        patch(2, json!({ "digest_webhook_url": url })).await,
+        StatusCode::OK
+    );
+    assert_eq!(patch(2, json!({ "enabled": false })).await, StatusCode::OK);
     let i = db::installation(&pool, 2).await.unwrap().unwrap();
-    assert_eq!(i.digest_webhook_url.as_deref(), Some(url));
+    assert!(i.digest_webhook_sealed.is_some());
 }

@@ -421,6 +421,7 @@ dependencies = [
  "hex",
  "hmac 0.13.0",
  "octocrab",
+ "ring",
  "serde",
  "serde_json",
  "sha2 0.11.1",

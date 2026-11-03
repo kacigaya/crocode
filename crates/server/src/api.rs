@@ -280,11 +280,8 @@ fn view(i: db::Installation, can_admin: bool) -> InstallationView {
             model: i.model,
         },
         digest: DigestView {
-            enabled: i.digest_webhook_url.is_some(),
-            webhook_host: i
-                .digest_webhook_url
-                .as_deref()
-                .and_then(crate::digest::webhook_host),
+            enabled: i.digest_webhook_sealed.is_some(),
+            webhook_host: i.digest_webhook_host,
             sent_at: i.digest_sent_at,
             attempted_at: i.digest_attempted_at,
             error: i.digest_error,
@@ -388,14 +385,25 @@ async fn update_settings(
         Some(None) => None,
         None => current.model,
     };
-    let digest = match &patch.digest_webhook_url {
+    let sealed = match &patch.digest_webhook_url {
         Some(Some(url)) => {
             crate::digest::validate_webhook_url(url).map_err(unprocessable)?;
-            Some(Some(url.as_str()))
+            let host = crate::digest::webhook_host(url)
+                .ok_or_else(|| unprocessable("invalid webhook URL"))?;
+            let sealed = state.webhook_key.seal(id, url).map_err(|err| {
+                tracing::error!(error = err, "seal webhook URL");
+                ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
+            })?;
+            Some(Some((sealed, host)))
         }
         Some(None) => Some(None),
         None => None,
     };
+    let digest = sealed.as_ref().map(|value| {
+        value
+            .as_ref()
+            .map(|(sealed, host)| (sealed.as_str(), host.as_str()))
+    });
     let enabled = patch.enabled.unwrap_or(current.enabled);
     db::update_settings(
         &state.db,

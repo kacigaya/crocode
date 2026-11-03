@@ -265,7 +265,7 @@ export function SettingsForm({
                   : ""}
                 Use an HTTPS Slack or Mattermost incoming webhook, or a
                 Discord webhook URL that ends in /slack. CroCode stores the URL
-                as a secret and never shows it again.
+                encrypted and never shows it again.
               </p>
             </div>
           )}

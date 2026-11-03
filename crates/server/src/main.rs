@@ -36,6 +36,7 @@ pub struct AppState {
     pub auth: Arc<api::AuthCache>,
     pub pulls: Arc<api::PullCache>,
     pub vulnerability_checks: Arc<vulnerabilities::CheckHistory>,
+    pub webhook_key: Arc<digest::WebhookKey>,
 }
 
 const USAGE: &str = "usage: crocode <api|worker|all|migrate>";
@@ -75,6 +76,7 @@ async fn main() -> Result<()> {
             &settings.github_private_key,
             &settings.github_api_url,
         )?,
+        webhook_key: Arc::new(digest::WebhookKey::derive(&settings.github_private_key)),
         settings,
         auth: Arc::default(),
         pulls: Arc::default(),

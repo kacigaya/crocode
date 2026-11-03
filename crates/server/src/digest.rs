@@ -1,6 +1,7 @@
 //! Opt-in weekly security digest.
 //!
-//! An installation admin sets an HTTPS webhook URL. Every 7 days the worker
+//! An installation admin sets an HTTPS webhook URL. The database holds it
+//! sealed with AES-256-GCM, see [`WebhookKey`]. Every 7 days the worker
 //! reads the Dependabot alerts of the installation with a read-only token and
 //! posts a Slack-compatible message (`{"text": ...}`) to that URL.
 //!
@@ -16,8 +17,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use axum::http::Uri;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use chrono::{DateTime, Utc};
 use octocrab::{Octocrab, Page};
+use ring::rand::{SecureRandom, SystemRandom};
+use ring::{aead, hkdf};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -44,6 +49,71 @@ const NETWORK_TIMEOUT: Duration = Duration::from_secs(15);
 const DELIVER_TIMEOUT: Duration = Duration::from_secs(45 * 60);
 /// Items listed per section. Counts always cover every alert.
 const LIST_ITEMS: usize = 5;
+
+/// Seals webhook URLs at rest. The AES-256-GCM key comes from the GitHub App
+/// private key through HKDF-SHA256, so a database dump or backup alone does
+/// not reveal a URL. The installation ID is the associated data: a sealed
+/// value copied to another installation does not open. Rotating the App key
+/// makes stored URLs unreadable; the admin enters the URL again.
+pub struct WebhookKey(aead::LessSafeKey);
+
+const SEALED_PREFIX: &str = "v1:";
+
+impl WebhookKey {
+    pub fn derive(app_private_key: &[u8]) -> Self {
+        // The API and worker may read the same PEM with different line
+        // endings or trailing whitespace.
+        let normalized: Vec<u8> = String::from_utf8_lossy(app_private_key)
+            .replace("\r\n", "\n")
+            .trim()
+            .as_bytes()
+            .to_vec();
+        let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, b"crocode").extract(&normalized);
+        let okm = prk
+            .expand(&[b"digest webhook url v1"], &aead::AES_256_GCM)
+            .expect("AES-256 key length is a valid HKDF output length");
+        Self(aead::LessSafeKey::new(aead::UnboundKey::from(okm)))
+    }
+
+    pub fn seal(&self, installation: i64, url: &str) -> Result<String, &'static str> {
+        let mut nonce = [0u8; aead::NONCE_LEN];
+        SystemRandom::new()
+            .fill(&mut nonce)
+            .map_err(|_| "random number generator failed")?;
+        let mut data = url.as_bytes().to_vec();
+        self.0
+            .seal_in_place_append_tag(
+                aead::Nonce::assume_unique_for_key(nonce),
+                aead::Aad::from(installation.to_be_bytes()),
+                &mut data,
+            )
+            .map_err(|_| "cannot seal the webhook URL")?;
+        Ok(format!(
+            "{SEALED_PREFIX}{}",
+            STANDARD.encode([nonce.as_slice(), &data].concat())
+        ))
+    }
+
+    /// `None` when the value is damaged, belongs to another installation, or
+    /// was sealed with another key.
+    pub fn open(&self, installation: i64, sealed: &str) -> Option<String> {
+        let mut bytes = STANDARD.decode(sealed.strip_prefix(SEALED_PREFIX)?).ok()?;
+        if bytes.len() < aead::NONCE_LEN {
+            return None;
+        }
+        let mut data = bytes.split_off(aead::NONCE_LEN);
+        let nonce = aead::Nonce::try_assume_unique_for_key(&bytes).ok()?;
+        let plain = self
+            .0
+            .open_in_place(
+                nonce,
+                aead::Aad::from(installation.to_be_bytes()),
+                &mut data,
+            )
+            .ok()?;
+        String::from_utf8(plain.to_vec()).ok()
+    }
+}
 
 /// Days an open alert may stay open before the digest calls it overdue.
 pub fn deadline_days(severity: &str) -> Option<i64> {
@@ -541,6 +611,13 @@ pub async fn send(url: &str, text: &str) -> Result<(), String> {
 
 /// Returns the start of the alert read on success.
 async fn deliver(state: &AppState, job: &db::DigestJob) -> Result<DateTime<Utc>, String> {
+    let url = state
+        .webhook_key
+        .open(job.id, &job.digest_webhook_sealed)
+        .ok_or_else(|| {
+            "cannot decrypt the webhook URL; the GitHub App key may have changed, so enter the URL again"
+                .to_owned()
+        })?;
     let now = Utc::now();
     let since = job
         .digest_sent_at
@@ -575,15 +652,12 @@ async fn deliver(state: &AppState, job: &db::DigestJob) -> Result<DateTime<Utc>,
     match db::installation(&state.db, job.id).await {
         Ok(Some(i))
             if !i.suspended
-                && i.digest_webhook_url.as_deref() == Some(job.digest_webhook_url.as_str()) => {}
+                && i.digest_webhook_sealed.as_deref()
+                    == Some(job.digest_webhook_sealed.as_str()) => {}
         Ok(_) => return Err("digest settings changed before sending".into()),
         Err(_) => return Err("database error before sending".into()),
     }
-    send(
-        &job.digest_webhook_url,
-        &render(&job.account_login, &digest),
-    )
-    .await?;
+    send(&url, &render(&job.account_login, &digest)).await?;
     Ok(now)
 }
 
@@ -632,6 +706,36 @@ pub async fn run(state: AppState, shutdown: CancellationToken) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn webhook_urls_are_sealed_per_installation_and_key() {
+        let key = WebhookKey::derive(b"-----BEGIN KEY-----\nabc\n-----END KEY-----\n");
+        let url = "https://hooks.slack.com/services/T0/B0/secret";
+        let sealed = key.seal(7, url).unwrap();
+        assert!(sealed.starts_with("v1:") && !sealed.contains("secret"));
+        assert_ne!(
+            sealed,
+            key.seal(7, url).unwrap(),
+            "each seal uses a new nonce"
+        );
+        assert_eq!(key.open(7, &sealed).as_deref(), Some(url));
+        // The same PEM with other line endings derives the same key.
+        let crlf = WebhookKey::derive(b"-----BEGIN KEY-----\r\nabc\r\n-----END KEY-----");
+        assert_eq!(crlf.open(7, &sealed).as_deref(), Some(url));
+        assert_eq!(key.open(8, &sealed), None, "another installation");
+        assert_eq!(
+            WebhookKey::derive(b"other").open(7, &sealed),
+            None,
+            "another key"
+        );
+        let mut tampered = sealed.clone().into_bytes();
+        let last = tampered.len() - 2;
+        tampered[last] = if tampered[last] == b'A' { b'B' } else { b'A' };
+        assert_eq!(key.open(7, &String::from_utf8(tampered).unwrap()), None);
+        for bad in ["", "v1:", "v1:AAAA", url] {
+            assert_eq!(key.open(7, bad), None, "{bad}");
+        }
+    }
     use axum::extract::OriginalUri;
     use axum::response::IntoResponse;
     use axum::{Router, routing::get};
