@@ -91,12 +91,19 @@ Alternative providers can need more credentials in `CROCODE_AGENT_ENV`.
 | Codex | `CODEX_API_KEY`, `OPENAI_BASE_URL` |
 | OpenCode | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_API_KEY` |
 
-To use a Claude subscription instead of an API key:
+## Use a subscription
+
+Claude Code and Codex can run on the subscription you already have.
+You do not need an API key or a per-token bill.
+Reviews count against your plan usage limits.
+
+### Claude with a Claude subscription
 
 1. Run `claude setup-token` and copy the token.
 2. Set `CLAUDE_CODE_OAUTH_TOKEN` to the token. Leave `ANTHROPIC_API_KEY` empty.
 
-An API key takes precedence. Reviews then count against the subscription usage limits.
+A nonempty API key takes precedence over the token.
+Subscription runs cannot use the OSV tools. See [OSV vulnerability tools](#osv-vulnerability-tools).
 
 ### Codex with a ChatGPT subscription
 

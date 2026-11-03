@@ -7,6 +7,8 @@
 <p align="center">
   <strong>Self-hostable AI code review for GitHub.</strong>
   <br>
+  <strong>Use your Claude Code or Codex subscription. No API key needed.</strong>
+  <br>
    <em>CroCode runs Claude Code,
   Codex, or OpenCode in a read-only container, checks every finding against
   the diff, and posts inline review comments with severity and suggested
@@ -19,6 +21,16 @@
   <a href="docker-compose.yml"><img alt="Docker Compose for ARM64 and AMD64" src="https://shieldcn.dev/badge/Docker_Compose-ARM64_%7C_AMD64-2496ed.svg?variant=secondary&amp;logo=docker"></a>
   <a href="https://github.com/kacigaya/crocode/blob/main/LICENSE"><img alt="Apache 2.0 License" src="https://shieldcn.dev/github/license/kacigaya/crocode.svg?variant=secondary"></a>
 </p>
+
+## Use your subscription
+
+CroCode works with the plan you already pay for:
+
+- **Claude Code:** Use your Claude subscription. Run `claude setup-token` and set `CLAUDE_CODE_OAUTH_TOKEN`.
+- **Codex:** Use your ChatGPT subscription. Sign in once with `codex login --device-auth` and set `CROCODE_CODEX_AUTH_DIR`.
+
+You do not need a per-token API bill. Reviews count against your plan usage limits.
+API keys also work. See [subscription setup](docs/configuration.md#use-a-subscription).
 
 > [!NOTE]
 > CroCode is in development. See the [releases](https://github.com/kacigaya/crocode/releases) for available versions.
@@ -90,7 +102,8 @@ The `crocode-setup` skill in `.agents/skills/` guides the agent. It asks before 
 
 1. Set separate database setup and runtime passwords and your agent credentials in `.env`.
    Keep each password consistent with its connection URL.
-   For Claude, use an API key or a subscription token from `claude setup-token`.
+   For Claude, use a subscription token from `claude setup-token` or an API key.
+   For Codex, use a [ChatGPT subscription login](docs/configuration.md#codex-with-a-chatgpt-subscription) or an API key.
    Leave the GitHub App values empty. The dashboard creates the app.
 2. Set `DOCKER_GID` to the output of `stat -c '%g' /var/run/docker.sock`.
 3. Create the work directory. The host path and the worker path must match.
@@ -143,9 +156,9 @@ See [all fields and defaults](docs/configuration.md).
 
 | Agent | Read-only mode | Credentials |
 |---|---|---|
-| Claude Code | `--bare --restricted`, tools `Read,Grep,Glob` only | `ANTHROPIC_API_KEY`, or a subscription token in `CLAUDE_CODE_OAUTH_TOKEN` |
+| Claude Code | `--bare --restricted`, tools `Read,Grep,Glob` only | Claude subscription token in `CLAUDE_CODE_OAUTH_TOKEN`, or `ANTHROPIC_API_KEY` |
+| Codex | `--sandbox read-only` | ChatGPT subscription login in `CROCODE_CODEX_AUTH_DIR`, or `CODEX_API_KEY` |
 | OpenCode | Every permission denied except read, glob, and grep | Provider key, for example `OPENROUTER_API_KEY` |
-| Codex | `--sandbox read-only` | `CODEX_API_KEY` |
 
 Codex needs bubblewrap namespaces. Docker's default profile blocks them, so the
 example config enables Claude and OpenCode only. See

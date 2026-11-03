@@ -31,6 +31,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       id: "what-is-crocode", title: "What is CroCode?",
       content: <>
         <p>CroCode reviews GitHub pull requests with Claude Code, Codex, or OpenCode. You run the API, workers, database, and dashboard on your own servers.</p>
+        <p><strong>Use your Claude Code or Codex subscription.</strong> You do not need an API key or a per-token bill. Reviews count against your plan usage limits. See <Link href="/docs/configuration/agents#subscriptions">subscription setup</Link>.</p>
         <p>Each agent gets a read-only checkout. CroCode checks the findings against the diff, removes duplicates, and posts inline comments with severity levels and suggested fixes.</p>
         <Note><p>CroCode is in development. See the <a href="https://github.com/kacigaya/crocode/releases">releases</a> for available versions. Model providers receive code and review context. Read the <Link href="/docs/security">security guide</Link> before you review untrusted code.</p></Note>
       </>,
@@ -79,7 +80,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
         <CodeBlock label="Terminal" code={'git clone https://github.com/kacigaya/crocode.git\ncd crocode\ncp .env.example .env\nchmod 600 .env\nstat -c \'%g\' /var/run/docker.sock'} />
         <ol>
           <li>Set separate <code>POSTGRES_PASSWORD</code> and <code>CROCODE_DB_PASSWORD</code> values in <code>.env</code>. Match the first to <code>MIGRATION_DATABASE_URL</code> and the second to <code>DATABASE_URL</code>.</li>
-          <li>Set the model credentials for your agent. For a Claude subscription, set <code>CLAUDE_CODE_OAUTH_TOKEN</code> and leave <code>ANTHROPIC_API_KEY</code> empty.</li>
+          <li>Set the model credentials for your agent. For a Claude subscription, set <code>CLAUDE_CODE_OAUTH_TOKEN</code> and leave <code>ANTHROPIC_API_KEY</code> empty. For a ChatGPT subscription, follow the <Link href="/docs/configuration/agents#codex">Codex login steps</Link>.</li>
           <li>Set <code>DOCKER_GID</code> to the socket group ID printed by the command above.</li>
           <li>Leave the GitHub App values empty. The setup page creates them.</li>
         </ol>
@@ -292,29 +293,47 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       content: <>
         <p>Set the enabled list with <code>CROCODE_AGENTS</code>. Choose the server default with <code>CROCODE_DEFAULT_AGENT</code>. Installation settings and <Link href="/docs/configuration/repository#selection">repository config</Link> can override it.</p>
         <Table headings={["Agent", "Read-only controls", "Credentials"]} rows={[
-          ["Claude Code", "Read, Grep, and Glob tools only. Bare and restricted mode, or safe mode for subscription tokens.", "ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN"],
-          ["Codex", "exec --sandbox read-only with an ephemeral session.", "CODEX_API_KEY"],
+          ["Claude Code", "Read, Grep, and Glob tools only. Bare and restricted mode, or safe mode for subscription tokens.", "Claude subscription token in CLAUDE_CODE_OAUTH_TOKEN, or ANTHROPIC_API_KEY"],
+          ["Codex", "exec --sandbox read-only with an ephemeral session.", "ChatGPT subscription login in CROCODE_CODEX_AUTH_DIR, or CODEX_API_KEY"],
           ["OpenCode", "All permissions denied except read, glob, and grep. Pure mode disables external plugins.", "Provider key, such as OPENROUTER_API_KEY"],
         ]} />
       </>,
     },
     {
+      id: "subscriptions", title: "Use your subscription",
+      content: <>
+        <p>Claude Code and Codex can run on the plan you already pay for. You do not need an API key or a per-token bill.</p>
+        <ul>
+          <li><Link href="/docs/configuration/agents#claude">Claude Code</Link>: use your Claude subscription through <code>claude setup-token</code>.</li>
+          <li><Link href="/docs/configuration/agents#codex">Codex</Link>: use your ChatGPT subscription through <code>codex login --device-auth</code>.</li>
+        </ul>
+        <p>Reviews count against your plan usage limits. API keys also work.</p>
+      </>,
+    },
+    {
       id: "claude", title: "Claude Code",
       content: <>
-        <p>Set <code>ANTHROPIC_API_KEY</code> on the worker to use an API key.</p>
         <p>To use a Claude subscription:</p>
         <ol>
           <li>Run <code>claude setup-token</code> with your own Claude CLI.</li>
           <li>Set the result as <code>CLAUDE_CODE_OAUTH_TOKEN</code> in the worker environment.</li>
           <li>Leave <code>ANTHROPIC_API_KEY</code> empty. A nonempty API key takes priority.</li>
         </ol>
-        <p>Subscription reviews count against subscription usage limits. CroCode uses safe mode for this path because bare mode does not read OAuth credentials.</p>
+        <p>To use an API key, set <code>ANTHROPIC_API_KEY</code> on the worker.</p>
+        <p>Subscription reviews count against subscription usage limits. CroCode uses safe mode for this path because bare mode does not read OAuth credentials. Safe mode also blocks the OSV vulnerability tools.</p>
       </>,
     },
     {
       id: "codex", title: "Codex",
       content: <>
-        <p>Set <code>CODEX_API_KEY</code>. An alternative API endpoint can use <code>OPENAI_BASE_URL</code>.</p>
+        <p>To use a ChatGPT subscription:</p>
+        <ol>
+          <li>Create a dedicated directory on the Docker host. Give UID and GID <code>10001:10001</code> access. Set its mode to <code>0700</code>.</li>
+          <li>Mount that directory at <code>/home/agent/.codex</code> in a temporary sandbox-image container. Run <code>codex login --device-auth</code> as <code>10001:10001</code> and complete the login.</li>
+          <li>Set <code>CROCODE_CODEX_AUTH_DIR</code> to the absolute host path. Leave <code>CODEX_API_KEY</code> empty.</li>
+        </ol>
+        <p>Reserve that login for CroCode. Do not mount your normal Codex home. Only Codex containers receive the directory. Reviews count against your ChatGPT plan limits.</p>
+        <p>To use an API key, set <code>CODEX_API_KEY</code>. An alternative API endpoint can use <code>OPENAI_BASE_URL</code>.</p>
         <Note><p>Codex needs bubblewrap namespaces. The default Docker restrictions on the development host block them. The example disables Codex. Keep its read-only sandbox enabled.</p></Note>
         <p>Before enabling Codex, use a compatible dedicated runtime and repeat the read, blocked-write, and blocked-network probes. Do not add privileged mode or bypass the sandbox to hide a namespace failure.</p>
         <p>See the <a href="https://github.com/kacigaya/crocode/blob/main/docker/README.md">container build and verification notes</a> for the pinned CLI versions and known host limits.</p>

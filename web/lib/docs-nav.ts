@@ -12,7 +12,7 @@ export const DOCS_NAV = [
     items: [
       { title: "Repository config", href: "/docs/configuration/repository", description: "Set review policy, file limits, and ignore patterns in .crocode.yml." },
       { title: "Server config", href: "/docs/configuration/server", description: "Configure the API, worker, database, and sandbox environment." },
-      { title: "Agents", href: "/docs/configuration/agents", description: "Choose Claude Code, Codex, or OpenCode and supply model credentials." },
+      { title: "Agents", href: "/docs/configuration/agents", description: "Choose Claude Code, Codex, or OpenCode. Use a subscription or an API key." },
     ],
   },
   {
