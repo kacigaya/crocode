@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu, X } from "lucide-react";
+import { type IconNode, MorphIcon } from "morphicons/react";
 import { useEffect, useId, useRef, useState } from "react";
 import { Brand } from "@/components/brand";
 import { GitHubMark } from "@/components/github-mark";
@@ -8,6 +8,17 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { DOCS_URL } from "@/lib/docs-site";
+
+// Lucide's Menu and X as icon data (ISC), so morphicons can morph between them.
+const menuIcon: IconNode = [
+  ["path", { d: "M4 5h16" }],
+  ["path", { d: "M4 12h16" }],
+  ["path", { d: "M4 19h16" }],
+];
+const closeIcon: IconNode = [
+  ["path", { d: "M18 6 6 18" }],
+  ["path", { d: "m6 6 12 12" }],
+];
 
 export function SiteHeader({
   mobileMenu,
@@ -71,7 +82,7 @@ export function SiteHeader({
                   aria-label={open ? "Close menu" : "Open menu"}
                   onClick={() => setOpen((value) => !value)}
                 >
-                  {open ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
+                  <MorphIcon icon={open ? closeIcon : menuIcon} reducedMotion="user" />
                 </Button>
               )}
               <ThemeToggle />
@@ -93,17 +104,33 @@ export function SiteHeader({
             </nav>
           </div>
           {mobileMenu && (
+            // The bar grows to hold the menu, the panel fades in, and each
+            // link fades and slides down into place.
             <div
               id={panelId}
-              hidden={!open}
-              className="mt-3 max-h-[calc(100dvh-8rem)] overflow-y-auto border-t pt-5 pb-2 md:hidden"
+              inert={!open}
+              className={cn(
+                "grid overflow-hidden transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none md:hidden",
+                open
+                  ? "grid-rows-[1fr] translate-y-0 opacity-100"
+                  : "pointer-events-none grid-rows-[0fr] -translate-y-2 opacity-0",
+              )}
               onClick={(event) => {
                 if (event.target instanceof Element && event.target.closest("a")) {
                   setOpen(false);
                 }
               }}
             >
-              {mobileMenu}
+              <div className="min-h-0 overflow-hidden">
+                <div
+                  className={cn(
+                    "max-h-[calc(100dvh-8rem)] overflow-y-auto pt-4 pb-1 [&_a]:transition [&_a]:duration-200 motion-reduce:[&_a]:transition-none",
+                    open ? "[&_a]:translate-y-0 [&_a]:opacity-100" : "[&_a]:-translate-y-1 [&_a]:opacity-0",
+                  )}
+                >
+                  {mobileMenu}
+                </div>
+              </div>
             </div>
           )}
         </div>

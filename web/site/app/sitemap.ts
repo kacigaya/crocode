@@ -1,9 +1,9 @@
 import type { MetadataRoute } from "next";
 import { DOCS_PAGES } from "@/lib/docs-nav";
-import { canonicalDocUrl } from "@/lib/docs-site";
+import { canonicalDocUrl, DOCS_SITE_URL } from "@/lib/docs-site";
 
 export const dynamic = "force-static";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  return DOCS_PAGES.map((page) => ({ url: canonicalDocUrl(page.href) }));
+  return [{ url: `${DOCS_SITE_URL}/` }, ...DOCS_PAGES.map((page) => ({ url: canonicalDocUrl(page.href) }))];
 }
