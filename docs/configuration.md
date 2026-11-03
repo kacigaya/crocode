@@ -153,6 +153,48 @@ Sandbox networking must permit HTTPS to `api.osv.dev`.
 `CROCODE_SANDBOX_NETWORK=none` prevents OSV lookups.
 The tools do not give agents shell, write, or arbitrary URL access.
 
+## Weekly security digest
+
+The weekly security digest is off by default. An installation admin turns it on in
+**Settings** with an HTTPS chat webhook URL. The digest posts a Slack-compatible
+JSON body, `{"text": "..."}`. Slack and Mattermost incoming webhooks accept it.
+For Discord, add `/slack` to the end of the webhook URL.
+
+Every 7 days, the worker reads the Dependabot alerts of all installation repositories.
+It uses a token that can only read Dependabot alerts and repository metadata.
+The digest covers the time since the start of the last successful read, at most 30 days.
+The next window starts where the last read started, so no alert falls between two digests:
+
+- **New alerts**: alerts created in that time that are open or fixed.
+- **Fixed alerts**: alerts fixed in that time.
+- **Overdue open alerts**: open alerts older than the deadline for their severity.
+
+| Severity | Deadline |
+| --- | --- |
+| `critical` | 15 days |
+| `high` | 30 days |
+| `medium` | 90 days |
+| `low` | 180 days |
+
+Each section lists at most 5 alerts. The counts include every alert.
+The digest names repositories, packages, and CVE or GHSA IDs. It contains no advisory text.
+It reads at most 500 repositories. A repository that answers 401, 403, or 404 counts as
+"could not be read", and the digest still goes out. These answers mean no access or disabled alerts.
+A timeout, rate limit, or server error stops the send. The worker tries again in an hour with the
+same window, so no alert change is lost.
+Dismissed alerts are not counted. This is GitHub's alert inventory, not a full security scan.
+
+The worker checks for due digests every 10 minutes. After a failed send it tries again every hour.
+The database stores the webhook URL encrypted with a key derived from the GitHub App private key.
+After you rotate that private key, the worker cannot read stored URLs. The settings page then shows
+an error. Enter the webhook URL again to fix it.
+The settings page shows the last send and the last error.
+The GitHub App needs the read-only **Dependabot alerts** permission. See
+[Enable the vulnerability panel](github-app.md#enable-the-vulnerability-panel-on-an-existing-app).
+
+The worker needs outbound HTTPS to the webhook host. It connects only to public addresses.
+See [Network and data exposure](security.md#network-and-data-exposure).
+
 ## Compose environment
 
 | Variable | Example or default | Meaning |

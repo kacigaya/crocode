@@ -18,7 +18,7 @@ Errors use this shape:
 { "error": "message" }
 ```
 
-Status codes: `401` for a missing or bad token, `403` for no access, `404` for unknown IDs, `422` for bad input.
+Status codes: `401` for a missing or bad token, `403` for no access, `404` for unknown IDs, `409` for a review in the wrong state, `422` for bad input.
 
 ## Endpoints
 
@@ -41,11 +41,21 @@ Agents that this server can run, and the models that each agent CLI reports.
   "agents": ["claude", "codex"],
   "default": "claude",
   "models": {
-    "claude": [{ "id": "opus", "name": "opus" }],
+    "claude": [{ "id": "opus", "name": "Latest: Claude Opus 5.5" }],
     "codex": [{ "id": "gpt-6", "name": "GPT-6" }]
+  },
+  "health": {
+    "claude": { "available": true, "checked_at": "2026-11-02T10:00:00Z" },
+    "codex": null
   }
 }
 ```
+
+`health` shows the result of the latest model list run for each agent.
+`available` is false when the run failed or listed no models.
+A failed run keeps the models of the last success.
+`health` is `null` until the first run. The check shows that the CLI starts in
+the sandbox. It does not prove that review credentials work.
 
 The worker detects models at start and every 6 hours. It runs each list
 command in the sandbox:
@@ -76,6 +86,13 @@ Installations that the user can access and that exist in the database.
     "suspended": false,
     "created_at": "2026-11-01T10:00:00Z",
     "settings": { "enabled": true, "agent": "claude", "model": null },
+    "digest": {
+      "enabled": true,
+      "webhook_host": "hooks.slack.com",
+      "sent_at": "2026-11-01T10:00:00Z",
+      "attempted_at": "2026-11-01T10:00:00Z",
+      "error": null
+    },
     "can_admin": true
   }
 ]
@@ -84,6 +101,8 @@ Installations that the user can access and that exist in the database.
 `account_id` is the GitHub user or organization ID.
 `can_admin` is true when the user owns the account or is an organization admin.
 `settings.agent` and `settings.model` are `null` when the installation uses the server default.
+`digest` describes the weekly security digest. The API never returns the webhook URL. It returns the host only.
+`digest.error` holds the reason for the last failed send. It is `null` after a successful send.
 
 ### `GET /api/v1/installations/{id}`
 
@@ -94,8 +113,19 @@ One installation, same shape as above.
 Needs `can_admin`. All fields are optional. Set `model` to `null` to use the agent default.
 
 ```json
-{ "enabled": true, "agent": "codex", "model": "gpt-5.1-codex" }
+{
+  "enabled": true,
+  "agent": "codex",
+  "model": "gpt-5.1-codex",
+  "digest_webhook_url": "https://hooks.slack.com/services/T000/B000/XXXX"
+}
 ```
+
+Set `digest_webhook_url` to turn on the weekly security digest. Set it to `null` to turn it off.
+Leave it out to keep the current value. The URL must use `https`, port 443, and a public host name.
+The API rejects IP addresses, credentials in the URL, and local names with `422`.
+A new URL clears the last result. The first digest to it goes out within about 10 minutes.
+See [Weekly security digest](configuration.md#weekly-security-digest).
 
 Returns the updated installation.
 
@@ -121,13 +151,32 @@ Set both or neither. Otherwise the API returns `422`.
     "finding_count": 3,
     "error": null,
     "created_at": "2026-11-01T10:00:00Z",
-    "finished_at": "2026-11-01T10:03:00Z"
+    "finished_at": "2026-11-01T10:03:00Z",
+    "agent_duration_ms": 95000,
+    "input_tokens": 24388,
+    "cached_input_tokens": 12288,
+    "output_tokens": 512
   }
 ]
 ```
 
 `status` is one of `queued`, `running`, `succeeded`, `failed`, `cancelled`, `skipped`.
-`agent` is `null` until a worker picks an agent for the review.
+`agent` is `null` until a worker starts an agent for the review. The worker records the agent before the run.
+`model` is the model that the agent reported, or the requested model. `null` means the agent default.
+
+`agent_duration_ms` is the time in agent processes, including a fallback run. It is set for succeeded reviews.
+The token fields are the counts that the agent CLI reported, summed over fallback runs.
+Input counts include cached input. Each field is `null` when the CLI reported no value.
+
+| Agent | Source |
+| --- | --- |
+| Claude Code | `modelUsage` in the JSON result. Input is input plus cache reads plus cache writes. |
+| Codex | `usage` of each `turn.completed` JSONL event. The worker runs `codex exec --json`. |
+| OpenCode | `part.tokens` of each `step_finish` event. Output includes reasoning tokens. |
+
+`error` holds the failure reason of a failed review. For a cancelled review it holds one of
+`superseded`, `pull request closed`, `pull request converted to draft`, `installation removed`,
+or `cancelled from the dashboard`.
 
 ### `GET /api/v1/installations/{id}/stats`
 
@@ -147,13 +196,27 @@ Totals for the last 30 days, the review retention period.
   "published": 7,
   "severity": [{ "name": "high", "count": 4 }],
   "categories": [{ "name": "bug", "count": 5 }],
-  "daily": [{ "date": "2026-10-04", "reviews": 0, "failed": 0 }]
+  "daily": [{ "date": "2026-10-04", "reviews": 0, "failed": 0 }],
+  "agents": [{
+    "name": "claude",
+    "reviews": 8,
+    "succeeded": 7,
+    "failed": 1,
+    "median_agent_secs": 95.0,
+    "usage_reviews": 7,
+    "input_tokens": 170716,
+    "cached_input_tokens": 86016,
+    "output_tokens": 3584,
+    "models": ["claude-opus-5-5"]
+  }]
 }
 ```
 
 `median_duration_secs` is the time from queue to result for succeeded reviews.
 It is `null` when no review succeeded. `categories` holds the five most common.
 `daily` has one entry for each UTC day, oldest first.
+`agents` has one entry for each agent that started a review, most used first.
+`usage_reviews` counts the reviews that reported tokens. The token sums cover only those reviews.
 
 ### `GET /api/v1/installations/{id}/pulls`
 
@@ -245,6 +308,26 @@ Live pull request details from GitHub, read with the user token.
 
 `state` is `open`, `closed`, or `merged`. The API returns `404` when GitHub does
 not show the pull request to the user, and `502` for other GitHub failures.
+
+### `POST /api/v1/reviews/{id}/retry`
+
+Needs `can_admin`. Queues a failed or cancelled review again with fresh attempts. No body.
+Returns the review with status `queued`.
+
+The review must be the newest review of its pull request, and no other review of it may be queued or running.
+Otherwise the API returns `409`. This rule stops an old commit from replacing a newer one.
+A cancelled running review also returns `409` until its worker stops the agent, within about 20 seconds.
+This keeps two runs of one review apart.
+A retry clears the error, agent, model, timing, and token fields. It keeps the GitHub review ID,
+so a review that was already posted is not posted twice. The queue time restarts.
+
+### `POST /api/v1/reviews/{id}/cancel`
+
+Needs `can_admin`. Cancels a queued or running review. No body.
+Returns the review with status `cancelled` and error `cancelled from the dashboard`.
+Other states return `409`. A running agent stops at the next worker heartbeat, within about 20 seconds.
+
+Both endpoints return `404` for a review that the user cannot see and `403` for a user without `can_admin`.
 
 ### `GET /api/v1/installations/{id}/vulnerabilities`
 

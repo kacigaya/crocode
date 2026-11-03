@@ -55,6 +55,15 @@ export function formatDuration(start: string, end: string | null) {
 }
 
 /** "2m 41s" for a number of seconds, or null when it is not valid. */
+/** Compact count, such as `12.3K`. Null stays null. */
+export function formatCount(value: number | null) {
+  if (value === null || !Number.isFinite(value)) return null;
+  return new Intl.NumberFormat("en", {
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
 export function formatSeconds(value: number | null) {
   if (value === null) return null;
   const seconds = Math.round(value);

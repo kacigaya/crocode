@@ -110,3 +110,5 @@ An invalid signature returns `401` before the handler records a delivery.
 
 The dashboard uses the signed-in user's access. The user must be allowed to read security alerts.
 Repositories without that access show a warning. Review sandbox tokens do not receive this permission.
+The opt-in weekly security digest also needs this permission. The worker reads alerts with an
+installation token limited to Dependabot alerts and metadata.

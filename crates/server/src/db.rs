@@ -61,7 +61,18 @@ pub struct Installation {
     pub agent: Option<String>,
     pub model: Option<String>,
     pub created_at: DateTime<Utc>,
+    /// The webhook URL, sealed. Open it only to send. See `digest::WebhookKey`.
+    pub digest_webhook_sealed: Option<String>,
+    pub digest_webhook_host: Option<String>,
+    pub digest_sent_at: Option<DateTime<Utc>>,
+    pub digest_attempted_at: Option<DateTime<Utc>>,
+    pub digest_error: Option<String>,
 }
+
+const INSTALLATION_COLUMNS: &str =
+    "id, account_id, account_login, account_type, repository_selection,
+    suspended, enabled, agent, model, created_at,
+    digest_webhook_sealed, digest_webhook_host, digest_sent_at, digest_attempted_at, digest_error";
 
 pub struct InstallationUpsert<'a> {
     pub id: i64,
@@ -119,41 +130,55 @@ pub async fn set_installation_state(
 }
 
 pub async fn installation(db: &Db, id: i64) -> sqlx::Result<Option<Installation>> {
-    sqlx::query_as(
-        "SELECT id, account_id, account_login, account_type, repository_selection, suspended,
-                enabled, agent, model, created_at
-         FROM installations WHERE id = $1 AND NOT deleted",
-    )
-    .bind(id)
-    .fetch_optional(db)
-    .await
+    let sql =
+        format!("SELECT {INSTALLATION_COLUMNS} FROM installations WHERE id = $1 AND NOT deleted");
+    sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(id)
+        .fetch_optional(db)
+        .await
 }
 
 pub async fn installations(db: &Db, ids: &[i64]) -> sqlx::Result<Vec<Installation>> {
-    sqlx::query_as(
-        "SELECT id, account_id, account_login, account_type, repository_selection, suspended,
-                enabled, agent, model, created_at
-         FROM installations WHERE id = ANY($1) AND NOT deleted ORDER BY account_login",
-    )
-    .bind(ids)
-    .fetch_all(db)
-    .await
+    let sql = format!(
+        "SELECT {INSTALLATION_COLUMNS} FROM installations
+         WHERE id = ANY($1) AND NOT deleted ORDER BY account_login"
+    );
+    sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(ids)
+        .fetch_all(db)
+        .await
 }
 
+/// `digest`: the sealed webhook URL and its host. `None` keeps the current
+/// value, `Some(None)` turns the digest off. A new URL clears the last result and sends soon.
 pub async fn update_settings(
     db: &Db,
     id: i64,
     enabled: bool,
     agent: Option<&str>,
     model: Option<&str>,
+    digest: Option<Option<(&str, &str)>>,
 ) -> sqlx::Result<()> {
     sqlx::query(
-        "UPDATE installations SET enabled = $2, agent = $3, model = $4, updated_at = now() WHERE id = $1",
+        "UPDATE installations SET enabled = $2, agent = $3, model = $4,
+            digest_webhook_sealed = CASE WHEN $5 THEN $6 ELSE digest_webhook_sealed END,
+            digest_webhook_host = CASE WHEN $5 THEN $7 ELSE digest_webhook_host END,
+            digest_attempted_at = CASE WHEN $5 AND $6 IS DISTINCT FROM digest_webhook_sealed
+                                       THEN NULL ELSE digest_attempted_at END,
+            digest_error = CASE WHEN $5 AND $6 IS DISTINCT FROM digest_webhook_sealed
+                                THEN NULL ELSE digest_error END,
+            digest_sent_at = CASE WHEN $5 AND $6 IS DISTINCT FROM digest_webhook_sealed
+                                  THEN NULL ELSE digest_sent_at END,
+            updated_at = now()
+         WHERE id = $1",
     )
     .bind(id)
     .bind(enabled)
     .bind(agent)
     .bind(model)
+    .bind(digest.is_some())
+    .bind(digest.flatten().map(|(sealed, _)| sealed))
+    .bind(digest.flatten().map(|(_, host)| host))
     .execute(db)
     .await?;
     Ok(())
@@ -185,7 +210,15 @@ pub struct NewReview<'a> {
 /// reviews of the same pull request are cancelled.
 pub async fn enqueue_review(db: &Db, r: &NewReview<'_>) -> sqlx::Result<Option<Uuid>> {
     let mut tx = db.begin().await?;
-    cancel_pr_reviews(&mut *tx, r.repo_id, r.pr_number, Some(r.head_sha)).await?;
+    lock_pull(&mut tx, r.repo_id, r.pr_number).await?;
+    cancel_pr_reviews(
+        &mut *tx,
+        r.repo_id,
+        r.pr_number,
+        Some(r.head_sha),
+        "superseded",
+    )
+    .await?;
     let id: Option<Uuid> = sqlx::query_scalar(
         "INSERT INTO reviews (id, installation_id, repo_id, repo_full_name, pr_number, pr_title, head_sha, base_sha)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -211,15 +244,17 @@ pub async fn cancel_pr_reviews<'e>(
     repo_id: i64,
     pr_number: i64,
     keep_sha: Option<&str>,
+    reason: &str,
 ) -> sqlx::Result<u64> {
     let result = sqlx::query(
-        "UPDATE reviews SET status = 'cancelled', finished_at = now(), error = 'superseded'
+        "UPDATE reviews SET status = 'cancelled', finished_at = now(), error = $4
          WHERE repo_id = $1 AND pr_number = $2 AND status IN ('queued', 'running')
            AND ($3::text IS NULL OR head_sha <> $3)",
     )
     .bind(repo_id)
     .bind(pr_number as i32)
     .bind(keep_sha)
+    .bind(reason)
     .execute(executor)
     .await?;
     Ok(result.rows_affected())
@@ -292,6 +327,16 @@ pub async fn requeue_stale(db: &Db, older_than: Duration) -> sqlx::Result<u64> {
     .bind(older_than.as_secs_f64())
     .execute(db)
     .await?;
+    // A worker that died after another writer finished its review never
+    // releases the lease. Drop it so the review can be retried.
+    sqlx::query(
+        "UPDATE reviews SET locked_by = NULL
+         WHERE status <> 'running' AND locked_by IS NOT NULL
+           AND (heartbeat_at IS NULL OR heartbeat_at < now() - make_interval(secs => $1))",
+    )
+    .bind(older_than.as_secs_f64())
+    .execute(db)
+    .await?;
     Ok(result.rows_affected())
 }
 
@@ -315,12 +360,18 @@ pub async fn prune_reviews(db: &Db) -> sqlx::Result<u64> {
     Ok(result.rows_affected())
 }
 
+#[derive(Default)]
 pub struct Finish<'a> {
     pub status: &'a str,
     pub summary: Option<&'a str>,
     pub error: Option<&'a str>,
     pub agent: Option<&'a str>,
     pub model: Option<&'a str>,
+    /// Time in agent processes. Null when no agent ran.
+    pub agent_ms: Option<i64>,
+    pub input_tokens: Option<i64>,
+    pub cached_input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
 }
 
 /// Sets a final state. Has no effect when the review is no longer ours.
@@ -328,7 +379,8 @@ pub async fn finish_review(db: &Db, id: Uuid, worker: &str, f: &Finish<'_>) -> s
     sqlx::query(
         "UPDATE reviews SET status = $3, summary = $4, error = $5,
                 agent = COALESCE($6, agent), model = COALESCE($7, model),
-                finished_at = now(), locked_by = NULL
+                agent_duration_ms = $8, input_tokens = $9, cached_input_tokens = $10,
+                output_tokens = $11, finished_at = now(), locked_by = NULL
          WHERE id = $1 AND status = 'running' AND locked_by = $2",
     )
     .bind(id)
@@ -338,6 +390,10 @@ pub async fn finish_review(db: &Db, id: Uuid, worker: &str, f: &Finish<'_>) -> s
     .bind(f.error)
     .bind(f.agent)
     .bind(f.model)
+    .bind(f.agent_ms)
+    .bind(f.input_tokens)
+    .bind(f.cached_input_tokens)
+    .bind(f.output_tokens)
     .execute(db)
     .await?;
     Ok(())
@@ -377,27 +433,162 @@ pub async fn release_review(db: &Db, id: Uuid, worker: &str) -> sqlx::Result<()>
     Ok(())
 }
 
-pub async fn set_github_review_id(db: &Db, id: Uuid, review_id: i64) -> sqlx::Result<()> {
-    sqlx::query("UPDATE reviews SET github_review_id = $2 WHERE id = $1")
-        .bind(id)
-        .bind(review_id)
-        .execute(db)
+/// Records the agent before it runs, so running and failed reviews show it.
+pub async fn set_review_agent(
+    db: &Db,
+    id: Uuid,
+    worker: &str,
+    agent: &str,
+    model: Option<&str>,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE reviews SET agent = $3, model = $4
+         WHERE id = $1 AND status = 'running' AND locked_by = $2",
+    )
+    .bind(id)
+    .bind(worker)
+    .bind(agent)
+    .bind(model)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Cancels a queued or running review. A running worker sees the change at
+/// its next heartbeat and stops the agent. The worker keeps its lease until it
+/// has stopped, see [`release_lock`]. Returns false when the review was not
+/// queued or running.
+pub async fn cancel_review(db: &Db, id: Uuid) -> sqlx::Result<bool> {
+    let result = sqlx::query(
+        "UPDATE reviews SET status = 'cancelled', finished_at = now(),
+                error = 'cancelled from the dashboard'
+         WHERE id = $1 AND status IN ('queued', 'running')",
+    )
+    .bind(id)
+    .execute(db)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// Drops the lease of a review that another writer finished, after the worker
+/// has stopped its agent.
+pub async fn release_lock(db: &Db, id: Uuid, worker: &str) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE reviews SET locked_by = NULL
+         WHERE id = $1 AND locked_by = $2 AND status <> 'running'",
+    )
+    .bind(id)
+    .bind(worker)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Queues a failed or cancelled review again with fresh attempts. Only the
+/// newest review of a pull request qualifies, and only while no other review
+/// of it is active, so an old commit never replaces a newer one. A review
+/// whose worker still holds the lease waits, so two runs never share a work
+/// directory or container name. The GitHub
+/// review ID stays, so a review that was already posted is not posted twice.
+/// Returns false when the review does not qualify.
+pub async fn requeue_review(db: &Db, id: Uuid) -> sqlx::Result<bool> {
+    let mut tx = db.begin().await?;
+    let Some((repo_id, pr_number)): Option<(i64, i32)> =
+        sqlx::query_as("SELECT repo_id, pr_number FROM reviews WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+    else {
+        return Ok(false);
+    };
+    lock_pull(&mut tx, repo_id, pr_number.into()).await?;
+    let result = sqlx::query(
+        "UPDATE reviews r SET status = 'queued', attempts = 0, run_after = now(),
+                created_at = now(), started_at = NULL, finished_at = NULL, heartbeat_at = NULL,
+                locked_by = NULL, error = NULL, summary = NULL, agent = NULL, model = NULL,
+                agent_duration_ms = NULL, input_tokens = NULL, cached_input_tokens = NULL,
+                output_tokens = NULL
+         WHERE r.id = $1 AND r.status IN ('failed', 'cancelled') AND r.locked_by IS NULL
+           AND NOT EXISTS (
+               SELECT FROM reviews x
+               WHERE x.repo_id = r.repo_id AND x.pr_number = r.pr_number AND x.id <> r.id
+                 AND (x.status IN ('queued', 'running') OR x.created_at > r.created_at))",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// Serializes queue changes of one pull request until the transaction ends,
+/// so a push and a dashboard retry cannot both queue a review.
+async fn lock_pull(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    repo_id: i64,
+    pr_number: i64,
+) -> sqlx::Result<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!("crocode:pull:{repo_id}:{pr_number}"))
+        .execute(&mut **tx)
         .await?;
     Ok(())
 }
 
+/// Fingerprints that other reviews of the pull request published. The rows of
+/// `review_id` itself are left out: a retried review replaces them, and its
+/// earlier attempt may already have posted them.
 pub async fn published_fingerprints(
     db: &Db,
     repo_id: i64,
     pr_number: i64,
+    review_id: Uuid,
 ) -> sqlx::Result<HashSet<String>> {
     let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT fingerprint FROM findings WHERE repo_id = $1 AND pr_number = $2 AND published",
+        "SELECT fingerprint FROM findings
+         WHERE repo_id = $1 AND pr_number = $2 AND published AND review_id <> $3",
     )
     .bind(repo_id)
     .bind(pr_number as i32)
+    .bind(review_id)
     .fetch_all(db)
     .await?;
+    Ok(rows.into_iter().collect())
+}
+
+/// Saves the GitHub review ID and marks the posted findings, together.
+pub async fn mark_published(
+    db: &Db,
+    review_id: Uuid,
+    github_review_id: i64,
+    fingerprints: &[&str],
+) -> sqlx::Result<()> {
+    let mut tx = db.begin().await?;
+    sqlx::query("UPDATE reviews SET github_review_id = $2 WHERE id = $1")
+        .bind(review_id)
+        .bind(github_review_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "UPDATE findings SET published = TRUE WHERE review_id = $1 AND fingerprint = ANY($2)",
+    )
+    .bind(review_id)
+    .bind(fingerprints)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await
+}
+
+/// Fingerprints that an earlier attempt of this review published.
+pub async fn review_published_fingerprints(
+    db: &Db,
+    review_id: Uuid,
+) -> sqlx::Result<HashSet<String>> {
+    let rows: Vec<String> =
+        sqlx::query_scalar("SELECT fingerprint FROM findings WHERE review_id = $1 AND published")
+            .bind(review_id)
+            .fetch_all(db)
+            .await?;
     Ok(rows.into_iter().collect())
 }
 
@@ -423,8 +614,10 @@ pub async fn insert_findings(
     files: &[(&str, &str)],
 ) -> sqlx::Result<()> {
     let mut tx = db.begin().await?;
-    // A retried review replaces the findings of its earlier attempt.
-    sqlx::query("DELETE FROM findings WHERE review_id = $1")
+    // A retried review replaces the unpublished findings of its earlier
+    // attempt. Published rows stay as the record of what GitHub received;
+    // callers skip their fingerprints.
+    sqlx::query("DELETE FROM findings WHERE review_id = $1 AND NOT published")
         .bind(review_id)
         .execute(&mut *tx)
         .await?;
@@ -482,12 +675,17 @@ pub struct ReviewRow {
     pub error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
+    pub agent_duration_ms: Option<i64>,
+    pub input_tokens: Option<i64>,
+    pub cached_input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
 }
 
 const REVIEW_COLUMNS: &str = "r.id, r.installation_id, r.repo_full_name, r.pr_number, r.pr_title,
     r.head_sha, r.status, r.agent, r.model, r.attempts,
     (SELECT count(*) FROM findings f WHERE f.review_id = r.id) AS finding_count,
-    r.error, r.created_at, r.finished_at";
+    r.error, r.created_at, r.finished_at, r.agent_duration_ms, r.input_tokens,
+    r.cached_input_tokens, r.output_tokens";
 
 /// Reviews of one installation, newest first. `pull` limits the list to one
 /// pull request as `(repo_full_name, number)`.
@@ -565,6 +763,22 @@ pub struct Day {
     pub failed: i64,
 }
 
+/// Reviews of one agent. Token sums cover only reviews that reported usage.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct AgentUsage {
+    pub name: String,
+    pub reviews: i64,
+    pub succeeded: i64,
+    pub failed: i64,
+    pub median_agent_secs: Option<f64>,
+    /// Reviews that reported token usage.
+    pub usage_reviews: i64,
+    pub input_tokens: i64,
+    pub cached_input_tokens: i64,
+    pub output_tokens: i64,
+    pub models: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct Stats {
     pub days: i32,
@@ -577,6 +791,8 @@ pub struct Stats {
     pub categories: Vec<Count>,
     /// One entry per UTC day, oldest first.
     pub daily: Vec<Day>,
+    /// Reviews with a picked agent, most used first.
+    pub agents: Vec<AgentUsage>,
 }
 
 pub async fn stats(db: &Db, installation_id: i64) -> sqlx::Result<Stats> {
@@ -642,6 +858,27 @@ pub async fn stats(db: &Db, installation_id: i64) -> sqlx::Result<Stats> {
     .bind(STATS_DAYS)
     .fetch_all(&mut *tx)
     .await?;
+    let agents: Vec<AgentUsage> = sqlx::query_as(
+        "SELECT agent AS name, count(*) AS reviews,
+                count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
+                count(*) FILTER (WHERE status = 'failed') AS failed,
+                percentile_cont(0.5) WITHIN GROUP (ORDER BY agent_duration_ms / 1000.0)
+                    FILTER (WHERE agent_duration_ms IS NOT NULL) AS median_agent_secs,
+                count(input_tokens) AS usage_reviews,
+                COALESCE(sum(input_tokens), 0)::int8 AS input_tokens,
+                COALESCE(sum(cached_input_tokens), 0)::int8 AS cached_input_tokens,
+                COALESCE(sum(output_tokens), 0)::int8 AS output_tokens,
+                COALESCE(array_agg(DISTINCT model) FILTER (WHERE model IS NOT NULL), '{}')
+                    AS models
+         FROM reviews
+         WHERE installation_id = $1 AND agent IS NOT NULL
+           AND created_at >= now() - make_interval(days => $2)
+         GROUP BY agent ORDER BY count(*) DESC, agent",
+    )
+    .bind(installation_id)
+    .bind(STATS_DAYS)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(Stats {
         days: STATS_DAYS,
@@ -651,13 +888,16 @@ pub async fn stats(db: &Db, installation_id: i64) -> sqlx::Result<Stats> {
         severity,
         categories,
         daily,
+        agents,
     })
 }
 
 pub async fn save_agent_models<T: Serialize>(db: &Db, agent: &str, models: &T) -> sqlx::Result<()> {
     sqlx::query(
-        "INSERT INTO agent_models (agent, models, detected_at) VALUES ($1, $2, now())
-         ON CONFLICT (agent) DO UPDATE SET models = EXCLUDED.models, detected_at = now()",
+        "INSERT INTO agent_models (agent, models, available, detected_at, checked_at)
+         VALUES ($1, $2, TRUE, now(), now())
+         ON CONFLICT (agent) DO UPDATE SET models = EXCLUDED.models, available = TRUE,
+             detected_at = now(), checked_at = now()",
     )
     .bind(agent)
     .bind(sqlx::types::Json(models))
@@ -666,9 +906,31 @@ pub async fn save_agent_models<T: Serialize>(db: &Db, agent: &str, models: &T) -
     Ok(())
 }
 
-/// Stored model lists by agent name.
-pub async fn agent_models(db: &Db) -> sqlx::Result<Vec<(String, serde_json::Value)>> {
-    sqlx::query_as("SELECT agent, models FROM agent_models ORDER BY agent")
+/// Records a failed model list run. Keeps the models of the last success.
+pub async fn mark_agent_unavailable(db: &Db, agent: &str) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO agent_models (agent, models, available, checked_at)
+         VALUES ($1, '[]', FALSE, now())
+         ON CONFLICT (agent) DO UPDATE SET available = FALSE, checked_at = now()",
+    )
+    .bind(agent)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct AgentModels {
+    pub agent: String,
+    pub models: serde_json::Value,
+    /// False when the latest model list run failed.
+    pub available: bool,
+    pub checked_at: DateTime<Utc>,
+}
+
+/// Stored model lists and check results by agent name.
+pub async fn agent_models(db: &Db) -> sqlx::Result<Vec<AgentModels>> {
+    sqlx::query_as("SELECT agent, models, available, checked_at FROM agent_models ORDER BY agent")
         .fetch_all(db)
         .await
 }
@@ -733,4 +995,54 @@ pub async fn review_contents(
             .await?;
     tx.commit().await?;
     Ok((findings, files))
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct DigestJob {
+    pub id: i64,
+    pub account_login: String,
+    /// Sealed. See `digest::WebhookKey`.
+    pub digest_webhook_sealed: String,
+    pub digest_sent_at: Option<DateTime<Utc>>,
+}
+
+/// Claims one installation whose weekly digest is due. A failed send is
+/// tried again after an hour. Safe with several workers.
+pub async fn claim_digest(db: &Db) -> sqlx::Result<Option<DigestJob>> {
+    sqlx::query_as(
+        "UPDATE installations SET digest_attempted_at = now()
+         WHERE id = (
+            SELECT id FROM installations
+            WHERE digest_webhook_sealed IS NOT NULL AND NOT deleted AND NOT suspended
+              AND (digest_sent_at IS NULL OR digest_sent_at <= now() - interval '7 days')
+              AND (digest_attempted_at IS NULL OR digest_attempted_at <= now() - interval '1 hour')
+            ORDER BY digest_attempted_at NULLS FIRST
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1)
+         RETURNING id, account_login, digest_webhook_sealed, digest_sent_at",
+    )
+    .fetch_optional(db)
+    .await
+}
+
+/// Records a digest result. `Ok` holds the start of the alert read, so the next
+/// window starts there and misses no alert. Has no effect when an admin
+/// changed the URL after the claim.
+pub async fn finish_digest(
+    db: &Db,
+    job: &DigestJob,
+    result: Result<DateTime<Utc>, &str>,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE installations SET digest_error = $3,
+            digest_sent_at = COALESCE($4, digest_sent_at)
+         WHERE id = $1 AND digest_webhook_sealed = $2",
+    )
+    .bind(job.id)
+    .bind(&job.digest_webhook_sealed)
+    .bind(result.err())
+    .bind(result.ok())
+    .execute(db)
+    .await?;
+    Ok(())
 }

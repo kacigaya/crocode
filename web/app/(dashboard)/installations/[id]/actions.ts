@@ -25,12 +25,21 @@ export async function saveSettings(id: string, form: FormData): Promise<never> {
     )
       failure("agent");
     if (typeof model !== "string") failure("model");
+    // Undefined keeps the stored URL: the API never returns it to the form.
+    const url = form.get("digest_webhook_url");
+    const newUrl = typeof url === "string" ? url.trim() : "";
+    let digest: string | null | undefined;
+    if (form.get("digest") !== "on")
+      digest = installation.digest.enabled ? null : undefined;
+    else if (newUrl) digest = newUrl;
+    else if (!installation.digest.enabled) failure("digest_url");
     await api<Installation>(`/api/v1/installations/${id}/settings`, {
       method: "PATCH",
       body: {
         enabled: form.get("enabled") === "on",
         agent: agent === DEFAULT_AGENT ? null : agent,
         model: model.trim() || null,
+        ...(digest === undefined ? {} : { digest_webhook_url: digest }),
       },
     });
     revalidatePath(target);

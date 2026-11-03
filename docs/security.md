@@ -22,7 +22,7 @@ With a subscription token and no API key, Claude uses `--safe-mode` instead of `
 `--bare` does not read OAuth credentials.
 Safe mode skips repository CLAUDE.md files, hooks, plugins, skills, and MCP servers.
 A local test with a hostile CLAUDE.md and project hooks showed no hook run in safe mode.
-Codex uses `exec --sandbox read-only`, an ephemeral session, and ignores user config and rules.
+Codex uses `exec --sandbox read-only --json`, an ephemeral session, and ignores user config and rules.
 OpenCode denies all tools except read, glob, grep, and the two worker-supplied OSV lookup tools.
 It also uses `--pure` and disables project config, Claude config, and external skill discovery.
 These controls stop PR files from supplying OpenCode plugins or startup config.
@@ -175,6 +175,25 @@ A compromised CLI or injected command can attempt to exfiltrate code or model ke
 Selecting a Docker network does not create these firewall or proxy rules.
 `runsc` adds isolation. It does not create a provider egress allowlist.
 A `none` network also blocks model access unless you provide a supported local route.
+
+The Claude model list run receives the Claude credentials, like the OpenCode list run.
+It calls the Anthropic Models API, or `ANTHROPIC_BASE_URL` when set, and rejects redirects.
+Model IDs that contain a known secret value are dropped. Codex list runs receive no credentials.
+
+The weekly security digest is opt-in. It sends repository names, package names, and
+advisory IDs from the worker to the webhook host that an admin chose. That host and
+its chat service receive this data.
+The webhook URL works like a password. The database stores it sealed with AES-256-GCM.
+The key comes from the GitHub App private key through HKDF-SHA256. The database never holds that key,
+so a database dump or backup alone does not reveal the URL. The installation ID is bound to each sealed value.
+A host that holds both the database and the App private key can still read the URL.
+The database keeps the webhook host in plain text for display.
+The API never returns the URL, and error messages never contain it.
+The worker sends one HTTPS request to port 443 and follows no redirects.
+It resolves the host once and refuses the send when any address is private, loopback,
+link-local, shared, reserved, or otherwise not public. It then connects to a checked address.
+The API also rejects IP literals, credentials in the URL, and local host names.
+These checks reduce server-side request forgery. They do not replace an egress firewall.
 
 The database stores summaries, findings, PR metadata, and redacted errors.
 The worker removes completed reviews 30 days after completion.

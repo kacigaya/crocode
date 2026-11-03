@@ -36,14 +36,17 @@ pub struct Model {
 
 /// Prints `{"help": <claude --help>, "models": <Models API data>}`. The API
 /// call needs Anthropic credentials and is skipped for Bedrock and Vertex.
-/// An API key wins over a subscription token, like the Claude CLI.
+/// An API key wins over a subscription token, like the Claude CLI. A failed
+/// `claude --help` exits nonzero, so the check marks the CLI unavailable.
 const CLAUDE_LIST_SCRIPT: &str = r#"
 import { execFileSync } from "node:child_process";
 const env = process.env;
 const out = { help: "", models: [] };
 try {
   out.help = execFileSync("claude", ["--help"], { encoding: "utf8", timeout: 60000 });
-} catch {}
+} catch {
+  process.exit(1);
+}
 const key = env.ANTHROPIC_API_KEY;
 const oauth = env.CLAUDE_CODE_OAUTH_TOKEN;
 if ((key || oauth) && !env.CLAUDE_CODE_USE_BEDROCK && !env.CLAUDE_CODE_USE_VERTEX) {
@@ -233,7 +236,18 @@ pub async fn refresh_loop(state: AppState, shutdown: CancellationToken) {
             if shutdown.is_cancelled() {
                 return;
             }
-            match detect(&state, agent, &shutdown).await {
+            let result = detect(&state, agent, &shutdown).await;
+            if shutdown.is_cancelled() {
+                return;
+            }
+            // An empty list means the CLI did not start or answer as expected.
+            let available = matches!(&result, Ok(models) if !models.is_empty());
+            if !available
+                && let Err(err) = db::mark_agent_unavailable(&state.db, agent.name()).await
+            {
+                warn!(error = %err, "save agent check");
+            }
+            match result {
                 Ok(models) if models.is_empty() => {
                     warn!(agent = agent.name(), "agent listed no models")
                 }

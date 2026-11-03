@@ -158,6 +158,39 @@ impl GitHub {
         if !valid_repo_name(repo) {
             bail!("invalid repository name {repo:?}");
         }
+        let token = self
+            .installation_token(
+                installation_id,
+                json!({
+                    "repository_ids": [repo_id],
+                    "permissions": { "contents": "read", "pull_requests": "write" }
+                }),
+            )
+            .await?;
+        Ok(RepoClient {
+            client: self.token_client(&token)?,
+            token,
+            repo: repo.to_owned(),
+        })
+    }
+
+    /// Client for every repository of an installation that can only read
+    /// Dependabot alerts. Used by the weekly security digest.
+    pub async fn alerts_client(&self, installation_id: i64) -> Result<Octocrab> {
+        let token = self
+            .installation_token(
+                installation_id,
+                json!({ "permissions": { "vulnerability_alerts": "read", "metadata": "read" } }),
+            )
+            .await?;
+        self.token_client(&token)
+    }
+
+    async fn installation_token(
+        &self,
+        installation_id: i64,
+        body: serde_json::Value,
+    ) -> Result<String> {
         #[derive(Deserialize)]
         struct Token {
             token: String,
@@ -166,22 +199,18 @@ impl GitHub {
             .app
             .post(
                 format!("/app/installations/{installation_id}/access_tokens"),
-                Some(&json!({
-                    "repository_ids": [repo_id],
-                    "permissions": { "contents": "read", "pull_requests": "write" }
-                })),
+                Some(&body),
             )
             .await
             .context("create installation token")?;
-        let client = Octocrab::builder()
+        Ok(token.token)
+    }
+
+    fn token_client(&self, token: &str) -> Result<Octocrab> {
+        Ok(Octocrab::builder()
             .base_uri(self.api_url.as_str())?
-            .personal_token(token.token.clone())
-            .build()?;
-        Ok(RepoClient {
-            client,
-            token: token.token,
-            repo: repo.to_owned(),
-        })
+            .personal_token(token.to_owned())
+            .build()?)
     }
 
     pub fn user_client(&self, token: &str) -> Result<Octocrab> {

@@ -6,7 +6,7 @@ import { getEnv } from "./env";
 
 export async function api<T>(
   path: string,
-  options?: { method?: "GET" | "PATCH"; body?: unknown },
+  options?: { method?: "GET" | "PATCH" | "POST"; body?: unknown },
 ): Promise<T> {
   const token = await requireAccessToken();
   try {

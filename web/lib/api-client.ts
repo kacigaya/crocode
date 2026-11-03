@@ -7,9 +7,11 @@ export class ApiError extends Error {
           ? "You do not have access to this resource."
           : status === 404
             ? "This resource was not found."
-            : status === 422
-              ? "The API did not accept these settings. Check the agent and model."
-              : status === 0
+            : status === 409
+              ? "The review changed state. Reload the page and try again."
+              : status === 422
+                ? "The API did not accept these settings. Check the agent, model, and webhook URL."
+                : status === 0
                 ? "Cannot connect to the CroCode API. Try again."
                 : "The CroCode API could not complete this request. Try again.",
     );
@@ -21,7 +23,7 @@ export async function apiRequest<T>(
   baseUrl: string,
   token: string,
   path: string,
-  options: { method?: "GET" | "PATCH"; body?: unknown } = {},
+  options: { method?: "GET" | "PATCH" | "POST"; body?: unknown } = {},
   fetcher: typeof fetch = fetch,
 ): Promise<T> {
   if (

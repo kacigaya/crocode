@@ -16,6 +16,13 @@ const installation = {
   suspended: false,
   created_at: "2026-11-01T10:00:00Z",
   settings: { enabled: true, agent: "codex", model: null },
+  digest: {
+    enabled: false,
+    webhook_host: null,
+    sent_at: null,
+    attempted_at: null,
+    error: null,
+  },
   can_admin: true,
 };
 const review = {
@@ -30,10 +37,15 @@ const review = {
   model: null,
   attempts: 1,
   finding_count: 2,
-  error: null,
+  error: null as string | null,
   created_at: "2026-11-01T10:00:00.123456Z",
   finished_at: "2026-11-01T10:03:00Z",
+  agent_duration_ms: 95_000,
+  input_tokens: 24_388,
+  cached_input_tokens: 12_288,
+  output_tokens: 512,
 };
+const controls: string[] = [];
 let apiStatus = 200;
 let canAdmin = true;
 let empty = false;
@@ -60,7 +72,18 @@ const mock = Bun.serve({
           codex: [{ id: "gpt-smoke", name: "GPT Smoke" }],
           claude: [{ id: "opus", name: "opus" }],
         },
+        health: {
+          codex: { available: true, checked_at: "2026-11-01T10:00:00Z" },
+          claude: { available: false, checked_at: "2026-11-01T10:00:00Z" },
+        },
       });
+    if (
+      request.method === "POST" &&
+      /^\/api\/v1\/reviews\/[^/]+\/(retry|cancel)$/.test(url.pathname)
+    ) {
+      controls.push(url.pathname);
+      return Response.json({ ...review, status: "queued" });
+    }
     if (url.pathname.endsWith("/settings") && request.method === "PATCH") {
       const body: unknown = await request.json();
       patches.push(body);
@@ -115,6 +138,20 @@ const mock = Bun.serve({
           reviews: i === 29 ? 20 : 0,
           failed: i === 29 ? 1 : 0,
         })),
+        agents: [
+          {
+            name: "codex",
+            reviews: 20,
+            succeeded: 19,
+            failed: 1,
+            median_agent_secs: 95,
+            usage_reviews: 19,
+            input_tokens: 1_250_000,
+            cached_input_tokens: 600_000,
+            output_tokens: 40_000,
+            models: ["gpt-smoke"],
+          },
+        ],
       });
     if (url.pathname === "/api/v1/installations/123/pulls") {
       if (pullsFail) return Response.json({ error: "GitHub" }, { status: 502 });
@@ -389,6 +426,9 @@ try {
   assert.equal(response.status, 200);
   assert.match(overview, /Load older/);
   assert.match(overview, /Not reviewed/);
+  assert.match(overview, /Agent health and usage/);
+  assert.match(overview, /Unavailable/);
+  assert.match(overview, /1\.3M(<!-- -->)? in ·(<!-- -->)? (<!-- -->)?40K(<!-- -->)? out/);
   assert.ok(overview.includes("&lt;b&gt;Open pull request&lt;/b&gt;"));
   assert.ok(!overview.includes("<b>Open pull request</b>"));
   assert.ok(!overview.includes('name="agent"'), "Settings live in their own tab");
@@ -455,7 +495,7 @@ try {
   response = await get("/installations/123/settings");
   const settings = await response.text();
   assert.equal(response.status, 200);
-  assert.match(settings, /1 model detected from the codex CLI/);
+  assert.match(settings, /1 model detected for codex/);
   assert.match(settings, /<input[^>]*name="model"/, "Model field submits as model");
   assert.match(settings, /<input[^>]*name="agent"/, "Agent field submits as agent");
   const form = actionForm(settings, 'name="agent"');
@@ -475,6 +515,36 @@ try {
     "/installations/123/settings?saved=1",
   );
   assert.deepEqual(patches, [{ enabled: false, agent: "codex", model: null }]);
+  assert.match(settings, /Weekly security digest/);
+  form.set("digest", "on");
+  const missingUrl = await fetch(origin + "/installations/123/settings", {
+    method: "POST",
+    headers: { Cookie: sessionCookie, Origin: origin },
+    body: form,
+    redirect: "manual",
+    signal: AbortSignal.timeout(15_000),
+  });
+  assert.equal(
+    missingUrl.headers.get("location"),
+    "/installations/123/settings?error=digest_url",
+  );
+  form.set("digest_webhook_url", " https://hooks.slack.com/services/T/B/x ");
+  await fetch(origin + "/installations/123/settings", {
+    method: "POST",
+    headers: { Cookie: sessionCookie, Origin: origin },
+    body: form,
+    redirect: "manual",
+    signal: AbortSignal.timeout(15_000),
+  });
+  assert.deepEqual(patches.at(-1), {
+    enabled: false,
+    agent: "codex",
+    model: null,
+    digest_webhook_url: "https://hooks.slack.com/services/T/B/x",
+  });
+  patches.length = 1;
+  form.delete("digest");
+  form.delete("digest_webhook_url");
   assert.match(
     await (await get("/installations/123/settings?saved=1")).text(),
     /Settings saved/,
@@ -525,6 +595,26 @@ try {
   assert.ok(!detail.includes('<script>alert("summary")</script>'));
   assert.ok(detail.includes("&lt;script&gt;"));
   assert.ok(!detail.includes('<img src=x onerror="alert(1)">'));
+  assert.match(detail, /24\.4K in · 512 out/);
+  assert.ok(!detail.includes("Retry review"), "No retry for a succeeded review");
+  review.status = "failed";
+  review.error = "agent timed out after 900s";
+  const failedDetail = await (await get(`/reviews/${reviewId}`)).text();
+  assert.match(failedDetail, /The agent took too long/);
+  assert.match(failedDetail, /Error details/);
+  assert.match(failedDetail, /Retry review/);
+  console.log("Submitting retry action");
+  const retry = await fetch(origin + `/reviews/${reviewId}`, {
+    method: "POST",
+    headers: { Cookie: sessionCookie, Origin: origin },
+    body: actionForm(failedDetail, "Retry review"),
+    redirect: "manual",
+    signal: AbortSignal.timeout(15_000),
+  });
+  assert.equal(retry.headers.get("location"), `/reviews/${reviewId}?done=retry`);
+  assert.deepEqual(controls, [`/api/v1/reviews/${reviewId}/retry`]);
+  review.status = "succeeded";
+  review.error = null;
   assert.match(await (await get("/reviews/invalid")).text(), /Page not found/);
   empty = true;
   assert.match(
@@ -643,7 +733,7 @@ try {
       `Sign-out clears ${name}`,
     );
   console.log(
-    "PASS: standalone runtime; public docs, Better Auth GitHub flow, landing, installations, overview, open pull requests and GitHub failure, vulnerabilities, fix priority queue and repository pages, settings and models, admin guard, pagination, review escaping, empty/404/401, expired token, disabled token endpoints, sign-in and sign-out actions.",
+    "PASS: standalone runtime; public docs, agent health, review retry, digest settings, Better Auth GitHub flow, landing, installations, overview, open pull requests and GitHub failure, vulnerabilities, fix priority queue and repository pages, settings and models, admin guard, pagination, review escaping, empty/404/401, expired token, disabled token endpoints, sign-in and sign-out actions.",
   );
 } catch (error) {
   console.error(output, calls);

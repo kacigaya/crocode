@@ -49,7 +49,10 @@ A new push cancels the old review. A commit that already has a review is not rev
 
 Sign in with GitHub. Choose an installation to set its agent and model and to
 follow its review history. Open a review to read each finding and its
-suggested fix. The screenshots use demo data.
+suggested fix. Admins can retry failed reviews and cancel queued ones. The
+overview shows agent health, run time, and token usage. An opt-in weekly
+security digest posts Dependabot alert changes to a chat webhook. The
+screenshots use demo data.
 
 <p align="center">
   <picture>

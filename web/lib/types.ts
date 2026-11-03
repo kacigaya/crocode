@@ -1,10 +1,14 @@
 export type User = { id: number; login: string };
 export type AgentModel = { id: string; name: string };
+/** Result of the latest model list run in the sandbox. */
+export type AgentHealth = { available: boolean; checked_at: string };
 export type Agents = {
   agents: string[];
   default: string;
   /** Models each enabled agent CLI reports. Empty until the worker detects them. */
   models: Record<string, AgentModel[]>;
+  /** Null until the worker checks the agent. */
+  health: Record<string, AgentHealth | null>;
 };
 /** Form value for "use the server default agent". The API stores it as null. */
 export const DEFAULT_AGENT = "default";
@@ -24,7 +28,16 @@ export type Installation = {
   suspended: boolean;
   created_at: string;
   settings: Settings;
+  digest: Digest;
   can_admin: boolean;
+};
+/** Opt-in weekly security digest. The API never returns the webhook URL. */
+export type Digest = {
+  enabled: boolean;
+  webhook_host: string | null;
+  sent_at: string | null;
+  attempted_at: string | null;
+  error: string | null;
 };
 export type ReviewStatus =
   | "queued"
@@ -49,6 +62,12 @@ export type Review = {
   error: string | null;
   created_at: string;
   finished_at: string | null;
+  /** Time in agent processes. Null when no agent finished. */
+  agent_duration_ms: number | null;
+  /** Token counts that the agent CLI reported. Input includes cached input. */
+  input_tokens: number | null;
+  cached_input_tokens: number | null;
+  output_tokens: number | null;
 };
 export const SEVERITIES = [
   "critical",
@@ -98,6 +117,21 @@ export type Stats = {
   categories: NameCount[];
   /** One entry per UTC day, oldest first. */
   daily: { date: string; reviews: number; failed: number }[];
+  /** Reviews with a picked agent, most used first. */
+  agents: AgentUsage[];
+};
+export type AgentUsage = {
+  name: string;
+  reviews: number;
+  succeeded: number;
+  failed: number;
+  median_agent_secs: number | null;
+  /** Reviews that reported token usage. Token sums cover only these. */
+  usage_reviews: number;
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  models: string[];
 };
 export type OpenPull = {
   repo_full_name: string;

@@ -268,6 +268,18 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
         <p>These values are code constants. See the <a href="https://github.com/kacigaya/crocode/blob/main/docs/configuration.md">full configuration reference</a> for Compose and retention details.</p>
       </>,
     },
+    {
+      id: "digest", title: "Weekly security digest",
+      content: <>
+        <p>The weekly security digest is off by default. An installation admin turns it on in <strong>Settings</strong> with an HTTPS chat webhook URL. CroCode posts a Slack-compatible <code>{'{"text": "..."}'}</code> body. Slack and Mattermost accept it. For Discord, add <code>/slack</code> to the end of the webhook URL.</p>
+        <p>Every 7 days, the worker reads the Dependabot alerts of all installation repositories with a token that can only read alerts and metadata. The digest counts new alerts, fixed alerts, and open alerts past their deadline. It lists at most 5 alerts in each section.</p>
+        <Table headings={["Severity", "Deadline"]} rows={[
+          [<code key="c">critical</code>, "15 days"], [<code key="h">high</code>, "30 days"],
+          [<code key="m">medium</code>, "90 days"], [<code key="l">low</code>, "180 days"],
+        ]} />
+        <p>The message names repositories, packages, and CVE or GHSA IDs. It leaves GitHub. The database stores the webhook URL encrypted with a key derived from the GitHub App private key, and the API never returns it. After a private key rotation, enter the URL again. The worker sends only to public addresses on port 443 and follows no redirects. After a failed send it tries again every hour.</p>
+      </>,
+    },
   ],
   "/docs/configuration/agents": [
     {
@@ -335,10 +347,12 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
           <li>Turn reviews on or off.</li>
           <li>Choose an enabled agent.</li>
           <li>Choose a model from the list, or type a model name. Leave the model blank to use the agent default.</li>
+          <li>Optional: turn on the <strong>Weekly security digest</strong> and enter an HTTPS chat webhook URL.</li>
           <li>Save the settings.</li>
         </ol>
         <p>The model list shows the models that each agent reports. For Claude, it shows the aliases and the versioned models from the Anthropic Models API. The worker checks them at start and every 6 hours.</p>
         <p>The <strong>Overview</strong> tab shows open pull requests and the state of their newest review. It also shows review totals, reviews per day, and findings by severity for the last 30 days.</p>
+        <p>The <strong>Agent health and usage</strong> card shows whether each agent CLI answered its last model list check in the sandbox. This check does not test credentials. The card also shows reviews, median agent time, token counts, and models for each agent. Token counts appear only when the agent CLI reports them.</p>
         <p>Only the account owner or an active organization admin can change settings. The server checks this access again when you save. Repository config can override the installation’s agent and model.</p>
       </>,
     },
@@ -352,7 +366,9 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
           ["cancelled", "The job was cancelled, for example after a new push."],
           ["skipped", "Review policy skipped the job."],
         ]} />
-        <p>Check the error text for failed reviews. The current API has no manual rerun endpoint. A head commit that already has a queue row is not queued again.</p>
+        <p>A failed or cancelled review shows a plain reason and a next step. Open <strong>Error details</strong> to read the stored error.</p>
+        <p>An admin can select <strong>Cancel review</strong> on a queued or running review. A running agent stops within about 20 seconds. An admin can select <strong>Retry review</strong> on a failed or cancelled review when it is the newest review of its pull request. A retry starts with fresh attempts and does not post a GitHub review twice.</p>
+        <p>The Summary tab also shows agent time and the token counts that the agent CLI reported.</p>
       </>,
     },
     {
@@ -437,7 +453,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       content: <Table headings={["Method", "Path", "Result"]} rows={[
         ["GET", <code key="health">/healthz</code>, "No authentication. Returns ok."],
         ["GET", <code key="me">/api/v1/me</code>, "Signed-in user ID and login."],
-        ["GET", <code key="agents">/api/v1/agents</code>, "Enabled agents, server default, and detected models."],
+        ["GET", <code key="agents">/api/v1/agents</code>, "Enabled agents, server default, detected models, and harness health."],
         ["GET", <code key="installs">/api/v1/installations</code>, "Accessible installations that exist in the database."],
         ["GET", <code key="install">/api/v1/installations/{"{id}"}</code>, "One accessible installation."],
         ["PATCH", <code key="settings">/api/v1/installations/{"{id}"}/settings</code>, "Update settings. Requires can_admin."],
@@ -446,14 +462,16 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
         ["GET", <code key="pulls">/api/v1/installations/{"{id}"}/pulls</code>, "Open pull requests with their newest review."],
         ["GET", <code key="review">/api/v1/reviews/{"{id}"}</code>, "One review with its summary and findings."],
         ["GET", <code key="review-pull">/api/v1/reviews/{"{id}"}/pull</code>, "Live pull request details from GitHub."],
+        ["POST", <code key="retry">/api/v1/reviews/{"{id}"}/retry</code>, "Queue the newest failed or cancelled review again. Requires can_admin."],
+        ["POST", <code key="cancel">/api/v1/reviews/{"{id}"}/cancel</code>, "Cancel a queued or running review. Requires can_admin."],
       ]} />,
     },
     {
       id: "installations", title: "Installations and settings",
       content: <>
-        <CodeBlock label="JSON · installation" code={'{\n  "id": 123,\n  "account_login": "acme",\n  "account_type": "Organization",\n  "repository_selection": "selected",\n  "suspended": false,\n  "created_at": "2026-11-01T10:00:00Z",\n  "settings": { "enabled": true, "agent": "claude", "model": null },\n  "can_admin": true\n}'} />
+        <CodeBlock label="JSON · installation" code={'{\n  "id": 123,\n  "account_login": "acme",\n  "account_type": "Organization",\n  "repository_selection": "selected",\n  "suspended": false,\n  "created_at": "2026-11-01T10:00:00Z",\n  "settings": { "enabled": true, "agent": "claude", "model": null },\n  "digest": { "enabled": false, "webhook_host": null, "sent_at": null, "attempted_at": null, "error": null },\n  "can_admin": true\n}'} />
         <p><code>can_admin</code> is true for the account owner or an organization admin. A null agent uses the server default. A null model uses the selected agent’s default.</p>
-        <p>All fields in the settings PATCH body are optional. The response is the updated installation.</p>
+        <p>All fields in the settings PATCH body are optional. The response is the updated installation. Set <code>digest_webhook_url</code> to an HTTPS URL to turn on the weekly security digest, or to <code>null</code> to turn it off. The API never returns the URL.</p>
         <CodeBlock label="JSON · settings PATCH body" code={'{ "enabled": true, "agent": "claude", "model": null }'} />
       </>,
     },
@@ -462,8 +480,8 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       content: <>
         <p>Use <code>limit</code> from 1 to 100. The default is 50. Supply an RFC 3339 timestamp as <code>before</code> for older reviews. Add <code>repo</code> and <code>pr</code> together to list the reviews of one pull request.</p>
         <CodeBlock label="Request path" code="/api/v1/installations/123/reviews?limit=50&before=2026-11-01T10:00:00Z" />
-        <CodeBlock label="JSON · review list" code={'[\n  {\n    "id": "6f1c0b9e-1a2b-4c3d-8e9f-0a1b2c3d4e5f",\n    "installation_id": 123,\n    "repo_full_name": "acme/api",\n    "pr_number": 42,\n    "pr_title": "Add login",\n    "head_sha": "abc123...",\n    "status": "succeeded",\n    "agent": "claude",\n    "model": null,\n    "attempts": 1,\n    "finding_count": 3,\n    "error": null,\n    "created_at": "2026-11-01T10:00:00Z",\n    "finished_at": "2026-11-01T10:03:00Z"\n  }\n]'} />
-        <p>Status is <code>queued</code>, <code>running</code>, <code>succeeded</code>, <code>failed</code>, <code>cancelled</code>, or <code>skipped</code>. The agent is null until a worker selects one.</p>
+        <CodeBlock label="JSON · review list" code={'[\n  {\n    "id": "6f1c0b9e-1a2b-4c3d-8e9f-0a1b2c3d4e5f",\n    "installation_id": 123,\n    "repo_full_name": "acme/api",\n    "pr_number": 42,\n    "pr_title": "Add login",\n    "head_sha": "abc123...",\n    "status": "succeeded",\n    "agent": "claude",\n    "model": null,\n    "attempts": 1,\n    "finding_count": 3,\n    "error": null,\n    "created_at": "2026-11-01T10:00:00Z",\n    "finished_at": "2026-11-01T10:03:00Z",\n    "agent_duration_ms": 95000,\n    "input_tokens": 24388,\n    "cached_input_tokens": 12288,\n    "output_tokens": 512\n  }\n]'} />
+        <p>Status is <code>queued</code>, <code>running</code>, <code>succeeded</code>, <code>failed</code>, <code>cancelled</code>, or <code>skipped</code>. The agent is null until a worker selects one. Token fields are null when the agent CLI reports no usage.</p>
       </>,
     },
     {

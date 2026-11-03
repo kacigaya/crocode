@@ -421,17 +421,20 @@ dependencies = [
  "hex",
  "hmac 0.13.0",
  "octocrab",
+ "ring",
  "serde",
  "serde_json",
  "sha2 0.11.1",
  "sqlx",
  "thiserror",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
  "tower",
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "webpki-roots",
 ]
 
 [[package]]

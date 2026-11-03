@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow};
 use crocode_core::config::{CONFIG_PATH, RepoConfig};
@@ -28,7 +28,11 @@ pub enum Outcome {
     Done {
         summary: String,
         agent: Agent,
+        /// The model the agent reported, else the requested model.
         model: Option<String>,
+        /// Time in agent processes, including a fallback run.
+        agent_ms: i64,
+        usage: agents::Usage,
     },
     Skipped(String),
 }
@@ -57,6 +61,7 @@ fn skip(reason: impl Into<String>) -> Result<Outcome, ReviewError> {
 pub async fn execute(
     state: &AppState,
     job: &db::Job,
+    worker: &str,
     cancel: &CancellationToken,
 ) -> Result<Outcome, ReviewError> {
     let settings = &state.settings;
@@ -207,6 +212,8 @@ pub async fn execute(
     let mut agent = agent;
     let mut model = model;
     let mut fallback_used = false;
+    let mut agent_ms: i64 = 0;
+    let mut usage = agents::Usage::default();
     let agent_review = loop {
         if cancel.is_cancelled() {
             return Err(ReviewError::Cancelled);
@@ -238,7 +245,9 @@ pub async fn execute(
         } else {
             Vec::new()
         };
+        db::set_review_agent(&state.db, job.id, worker, agent.name(), model.as_deref()).await?;
         info!(review = %job.id, agent = agent.name(), "agent started");
+        let started = Instant::now();
         let output = sandbox::run(
             settings,
             sandbox::Job {
@@ -259,6 +268,7 @@ pub async fn execute(
             RunError::Cancelled => ReviewError::Cancelled,
             other => ReviewError::Retry(anyhow!(other)),
         })?;
+        agent_ms = agent_ms.saturating_add(started.elapsed().as_millis() as i64);
 
         // Agent output can echo credentials if a prompt injection asks for them.
         // Remove every secret value this worker knows before anything is stored.
@@ -272,6 +282,7 @@ pub async fn execute(
         }
         secrets.extend(codex_secrets);
         let stdout = redact(&output.stdout, &secrets);
+        usage.add(agents::parse_usage(agent, &stdout));
         let result_file = tokio::fs::read_to_string(output_dir.join(RESULT_FILE))
             .await
             .ok()
@@ -326,10 +337,13 @@ pub async fn execute(
             max_inline: config.max_comments,
         },
     );
-    let seen = db::published_fingerprints(&state.db, job.repo_id, number).await?;
+    let seen = db::published_fingerprints(&state.db, job.repo_id, number, job.id).await?;
+    // Findings that an earlier attempt of this review posted keep their rows.
+    let own = db::review_published_fingerprints(&state.db, job.id).await?;
     let (new, repeated): (Vec<Finding>, Vec<Finding>) = validated
         .findings
         .into_iter()
+        .filter(|f| !own.contains(&f.fingerprint))
         .partition(|f| !seen.contains(&f.fingerprint));
     info!(
         review = %job.id,
@@ -339,20 +353,12 @@ pub async fn execute(
         "agent finished"
     );
 
-    // A retry after a crash must not post the same review twice.
-    let mut posted = job.github_review_id.is_some();
-    if !posted && !new.is_empty() {
-        let review_id =
-            publish(&gh, number, &job.head_sha, agent, &validated.summary, &new).await?;
-        db::set_github_review_id(&state.db, job.id, review_id).await?;
-        posted = true;
-    }
-
+    // Store first, unpublished. The posted findings are marked in the same
+    // transaction that saves the GitHub review ID, so the record never guesses.
     let rows: Vec<db::NewFinding<'_>> = new
         .iter()
-        .map(|f| (f, posted))
-        .chain(repeated.iter().map(|f| (f, false)))
-        .map(|(f, published)| db::NewFinding {
+        .chain(repeated.iter())
+        .map(|f| db::NewFinding {
             fingerprint: &f.fingerprint,
             path: &f.path,
             start_line: f.start_line,
@@ -362,7 +368,7 @@ pub async fn execute(
             title: &f.title,
             body: &f.body,
             suggestion: f.suggestion.as_deref(),
-            published,
+            published: false,
         })
         .collect();
     let finding_paths: HashSet<&str> = rows.iter().map(|f| f.path).collect();
@@ -374,6 +380,19 @@ pub async fn execute(
         .collect();
     db::insert_findings(&state.db, job.id, job.repo_id, number, &rows, &patches).await?;
 
+    // A review is posted at most once, even across retries.
+    if job.github_review_id.is_none() && !new.is_empty() {
+        // A dashboard cancel or a newer push may have taken the review away
+        // after the last heartbeat.
+        if !db::heartbeat(&state.db, job.id, worker).await? {
+            return Err(ReviewError::Cancelled);
+        }
+        let review_id =
+            publish(&gh, number, &job.head_sha, agent, &validated.summary, &new).await?;
+        let fingerprints: Vec<&str> = new.iter().map(|f| f.fingerprint.as_str()).collect();
+        db::mark_published(&state.db, job.id, review_id, &fingerprints).await?;
+    }
+
     let summary = if new.is_empty() {
         format!("{}\n\nNo new findings.", validated.summary)
     } else {
@@ -382,7 +401,9 @@ pub async fn execute(
     Ok(Outcome::Done {
         summary,
         agent,
-        model,
+        model: usage.model.clone().or(model),
+        agent_ms,
+        usage,
     })
 }
 
