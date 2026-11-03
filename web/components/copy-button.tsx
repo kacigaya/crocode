@@ -4,8 +4,8 @@ import { Check, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 
-/** Icon button that copies `value` and announces the result. */
-export function CopyButton({ value, label }: { value: string; label: string }) {
+/** Copies `value` and holds the result message for 1.5 seconds. */
+function useCopy(value: string) {
   const [status, setStatus] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const mounted = useRef(false);
@@ -32,6 +32,13 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
     timer.current = setTimeout(() => setStatus(""), 1500);
   }
 
+  return { status, copy };
+}
+
+/** Icon button that copies `value` and announces the result. */
+export function CopyButton({ value, label }: { value: string; label: string }) {
+  const { status, copy } = useCopy(value);
+
   return (
     <span className="inline-flex shrink-0 items-center gap-2">
       <span role="status" className="text-xs text-foreground">{status}</span>
@@ -39,5 +46,33 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
         {status === "Copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
       </Button>
     </span>
+  );
+}
+
+/** Copy button over the top-right corner of a code block. */
+export function CodeCopyButton({ value, label }: { value: string; label: string }) {
+  const { status, copy } = useCopy(value);
+
+  return (
+    <>
+      <span
+        role="status"
+        className={
+          status
+            ? "absolute top-3 right-12 z-10 rounded-md border bg-background px-2 py-1 text-xs text-foreground shadow-sm"
+            : "sr-only"
+        }
+      >
+        {status}
+      </span>
+      <button
+        type="button"
+        aria-label={`Copy ${label}`}
+        onClick={copy}
+        className="absolute top-3 right-3 z-10 inline-flex size-7 cursor-pointer items-center justify-center rounded-md border bg-background/80 text-muted-foreground outline-none backdrop-blur transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background [&_svg]:size-3.5"
+      >
+        {status === "Copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+      </button>
+    </>
   );
 }

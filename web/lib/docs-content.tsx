@@ -11,7 +11,7 @@ export interface DocSection {
 }
 
 function Note({ children }: { children: ReactNode }) {
-  return <aside className="my-6 rounded-lg border-l-2 border-brand bg-muted px-5 py-1 text-sm">{children}</aside>;
+  return <aside className="my-6 rounded-2xl border bg-card px-5 py-1 text-sm">{children}</aside>;
 }
 
 function Table({ headings, rows }: { headings: string[]; rows: ReactNode[][] }) {
@@ -51,7 +51,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       id: "review-policy", title: "Set your review policy",
       content: <>
         <p>Add <code>.crocode.yml</code> to the default branch. CroCode reads this file from the pull request base commit. A pull request cannot change its own review policy.</p>
-        <CodeBlock label=".crocode.yml" code={'agent: claude\nmin_severity: low\nmax_comments: 20\nreview_drafts: false\nignore:\n  - "docs/**"\ninstructions: |\n  Focus on authentication and data loss.'} />
+        <CodeBlock label=".crocode.yml" lang="yaml" code={'agent: claude\nmin_severity: low\nmax_comments: 20\nreview_drafts: false\nignore:\n  - "docs/**"\ninstructions: |\n  Focus on authentication and data loss.'} />
         <p>All fields are optional. See <Link href="/docs/configuration/repository">repository config</Link> for defaults and selection rules.</p>
       </>,
     },
@@ -77,7 +77,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
     {
       id: "prepare", title: "1. Prepare the environment",
       content: <>
-        <CodeBlock label="Terminal" code={'git clone https://github.com/kacigaya/crocode.git\ncd crocode\ncp .env.example .env\nchmod 600 .env\nstat -c \'%g\' /var/run/docker.sock'} />
+        <CodeBlock label="Terminal" lang="bash" code={'git clone https://github.com/kacigaya/crocode.git\ncd crocode\ncp .env.example .env\nchmod 600 .env\nstat -c \'%g\' /var/run/docker.sock'} />
         <ol>
           <li>Set separate <code>POSTGRES_PASSWORD</code> and <code>CROCODE_DB_PASSWORD</code> values in <code>.env</code>. Match the first to <code>MIGRATION_DATABASE_URL</code> and the second to <code>DATABASE_URL</code>.</li>
           <li>Set the model credentials for your agent. For a Claude subscription, set <code>CLAUDE_CODE_OAUTH_TOKEN</code> and leave <code>ANTHROPIC_API_KEY</code> empty. For a ChatGPT subscription, follow the <Link href="/docs/configuration/agents#codex">Codex login steps</Link>.</li>
@@ -91,7 +91,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       id: "start", title: "2. Build and start CroCode",
       content: <>
         <p>Create the work directory with the worker UID and GID. Its absolute path must match on the host and inside the worker.</p>
-        <CodeBlock label="Terminal" code={'sudo install -d -m 0755 -o 10000 -g 10000 /var/lib/crocode/work\nsudo docker build -t crocode-sandbox:latest docker/sandbox\nsudo docker compose --profile dashboard up -d --build'} />
+        <CodeBlock label="Terminal" lang="bash" code={'sudo install -d -m 0755 -o 10000 -g 10000 /var/lib/crocode/work\nsudo docker build -t crocode-sandbox:latest docker/sandbox\nsudo docker compose --profile dashboard up -d --build'} />
         <p>Postgres stores review jobs and findings. The API and worker wait for the GitHub App credentials from setup. Do not put dashboard secrets in the backend <code>.env</code>.</p>
       </>,
     },
@@ -109,7 +109,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
     {
       id: "github-app", title: "4. Create the GitHub App",
       content: <>
-        <CodeBlock label="Terminal" code="sudo docker compose logs web | grep setup" />
+        <CodeBlock label="Terminal" lang="bash" code="sudo docker compose logs web | grep setup" />
         <ol>
           <li>Open the setup link on your public address. Keep its token private.</li>
           <li>Confirm the public address and app name. Select <strong>Create the GitHub App</strong>.</li>
@@ -178,7 +178,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       id: "config-file", title: "The .crocode.yml file",
       content: <>
         <p>Place <code>.crocode.yml</code> on the default branch. CroCode reads it from the pull request base commit. An absent or blank file uses the defaults. Invalid YAML, unknown fields, or invalid ignore patterns fail the review without a retry.</p>
-        <CodeBlock label=".crocode.yml" code={'enabled: true\nagent: claude\nmodel: null\nreview_drafts: false\nmin_severity: low\nmax_comments: 20\nmax_files: 100\nmax_changed_lines: 3000\nignore:\n  - "docs/**"\ninstructions: |\n  Focus on authentication and data loss.'} />
+        <CodeBlock label=".crocode.yml" lang="yaml" code={'enabled: true\nagent: claude\nmodel: null\nreview_drafts: false\nmin_severity: low\nmax_comments: 20\nmax_files: 100\nmax_changed_lines: 3000\nignore:\n  - "docs/**"\ninstructions: |\n  Focus on authentication and data loss.'} />
       </>,
     },
     {
@@ -398,7 +398,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
     {
       id: "local-setup", title: "Run the dashboard locally",
       content: <>
-        <CodeBlock label="Terminal · web/" code="bun install --frozen-lockfile\ncp .env.example .env.local\nbun run dev" />
+        <CodeBlock label="Terminal · web/" lang="bash" code="bun install --frozen-lockfile\ncp .env.example .env.local\nbun run dev" />
         <p>Set all six values in <code>.env.local</code>: <code>GITHUB_CLIENT_ID</code>, <code>GITHUB_CLIENT_SECRET</code>, <code>GITHUB_APP_SLUG</code>, <code>BETTER_AUTH_SECRET</code>, <code>BETTER_AUTH_URL</code>, and <code>CROCODE_API_URL</code>.</p>
         <p>The auth secret needs at least 32 characters. The auth URL must be an HTTP(S) origin with no path. Set the GitHub OAuth callback to that origin plus <code>/api/auth/callback/github</code>. Keep API calls and tokens in server code.</p>
         <p>The <a href={DOCS_URL}>public docs on GitHub Pages</a> need no sign-in or GitHub credentials.</p>
@@ -466,9 +466,9 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       id: "authentication", title: "Authentication and errors",
       content: <>
         <p>The Rust API listens on port 8080. Send a GitHub App user access token as a bearer token. The dashboard calls the API from the server only.</p>
-        <CodeBlock label="HTTP header" code="Authorization: Bearer <github user access token>" />
+        <CodeBlock label="HTTP header" lang="http" code="Authorization: Bearer <github user access token>" />
         <p>The API checks accessible installations with GitHub and caches access for 60 seconds. It does not store user tokens in Postgres.</p>
-        <CodeBlock label="JSON error" code={'{ "error": "message" }'} />
+        <CodeBlock label="JSON error" lang="json" code={'{ "error": "message" }'} />
         <p>Errors use <code>401</code> for a missing or invalid token, <code>403</code> for no access, <code>404</code> for an unknown ID, and <code>422</code> for invalid input.</p>
       </>,
     },
@@ -493,10 +493,10 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
     {
       id: "installations", title: "Installations and settings",
       content: <>
-        <CodeBlock label="JSON · installation" code={'{\n  "id": 123,\n  "account_login": "acme",\n  "account_type": "Organization",\n  "repository_selection": "selected",\n  "suspended": false,\n  "created_at": "2026-11-01T10:00:00Z",\n  "settings": { "enabled": true, "agent": "claude", "model": null },\n  "digest": { "enabled": false, "webhook_host": null, "sent_at": null, "attempted_at": null, "error": null },\n  "can_admin": true\n}'} />
+        <CodeBlock label="JSON · installation" lang="json" code={'{\n  "id": 123,\n  "account_login": "acme",\n  "account_type": "Organization",\n  "repository_selection": "selected",\n  "suspended": false,\n  "created_at": "2026-11-01T10:00:00Z",\n  "settings": { "enabled": true, "agent": "claude", "model": null },\n  "digest": { "enabled": false, "webhook_host": null, "sent_at": null, "attempted_at": null, "error": null },\n  "can_admin": true\n}'} />
         <p><code>can_admin</code> is true for the account owner or an organization admin. A null agent uses the server default. A null model uses the selected agent’s default.</p>
         <p>All fields in the settings PATCH body are optional. The response is the updated installation. Set <code>digest_webhook_url</code> to an HTTPS URL to turn on the weekly security digest, or to <code>null</code> to turn it off. The API never returns the URL.</p>
-        <CodeBlock label="JSON · settings PATCH body" code={'{ "enabled": true, "agent": "claude", "model": null }'} />
+        <CodeBlock label="JSON · settings PATCH body" lang="json" code={'{ "enabled": true, "agent": "claude", "model": null }'} />
       </>,
     },
     {
@@ -504,7 +504,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       content: <>
         <p>Use <code>limit</code> from 1 to 100. The default is 50. Supply an RFC 3339 timestamp as <code>before</code> for older reviews. Add <code>repo</code> and <code>pr</code> together to list the reviews of one pull request.</p>
         <CodeBlock label="Request path" code="/api/v1/installations/123/reviews?limit=50&before=2026-11-01T10:00:00Z" />
-        <CodeBlock label="JSON · review list" code={'[\n  {\n    "id": "6f1c0b9e-1a2b-4c3d-8e9f-0a1b2c3d4e5f",\n    "installation_id": 123,\n    "repo_full_name": "acme/api",\n    "pr_number": 42,\n    "pr_title": "Add login",\n    "head_sha": "abc123...",\n    "status": "succeeded",\n    "agent": "claude",\n    "model": null,\n    "attempts": 1,\n    "finding_count": 3,\n    "error": null,\n    "created_at": "2026-11-01T10:00:00Z",\n    "finished_at": "2026-11-01T10:03:00Z",\n    "agent_duration_ms": 95000,\n    "input_tokens": 24388,\n    "cached_input_tokens": 12288,\n    "output_tokens": 512\n  }\n]'} />
+        <CodeBlock label="JSON · review list" lang="json" code={'[\n  {\n    "id": "6f1c0b9e-1a2b-4c3d-8e9f-0a1b2c3d4e5f",\n    "installation_id": 123,\n    "repo_full_name": "acme/api",\n    "pr_number": 42,\n    "pr_title": "Add login",\n    "head_sha": "abc123...",\n    "status": "succeeded",\n    "agent": "claude",\n    "model": null,\n    "attempts": 1,\n    "finding_count": 3,\n    "error": null,\n    "created_at": "2026-11-01T10:00:00Z",\n    "finished_at": "2026-11-01T10:03:00Z",\n    "agent_duration_ms": 95000,\n    "input_tokens": 24388,\n    "cached_input_tokens": 12288,\n    "output_tokens": 512\n  }\n]'} />
         <p>Status is <code>queued</code>, <code>running</code>, <code>succeeded</code>, <code>failed</code>, <code>cancelled</code>, or <code>skipped</code>. The agent is null until a worker selects one. Token fields are null when the agent CLI reports no usage.</p>
       </>,
     },
@@ -512,7 +512,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       id: "findings", title: "Review details and findings",
       content: <>
         <p>The detail response has <code>review</code>, <code>summary</code>, and <code>findings</code> fields. The review uses the same shape as a history item. Each finding uses this shape:</p>
-        <CodeBlock label="JSON · finding" code={'{\n  "id": "finding-id",\n  "path": "src/auth.rs",\n  "start_line": null,\n  "line": 120,\n  "severity": "high",\n  "category": "security",\n  "title": "Token compared with ==",\n  "body": "Explanation",\n  "suggestion": null,\n  "published": true\n}'} />
+        <CodeBlock label="JSON · finding" lang="json" code={'{\n  "id": "finding-id",\n  "path": "src/auth.rs",\n  "start_line": null,\n  "line": 120,\n  "severity": "high",\n  "category": "security",\n  "title": "Token compared with ==",\n  "body": "Explanation",\n  "suggestion": null,\n  "published": true\n}'} />
         <p>Severity is <code>critical</code>, <code>high</code>, <code>medium</code>, <code>low</code>, or <code>info</code>. Suggestions contain replacement code or null.</p>
         <p>The <a href="https://github.com/kacigaya/crocode/blob/main/docs/api.md">API contract in the repository</a> is the source reference for clients.</p>
       </>,
@@ -533,9 +533,9 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       id: "rust", title: "Rust checks",
       content: <>
         <p>Use Rust 1.89 or newer. Run from the repository root:</p>
-        <CodeBlock label="Terminal" code="cargo fmt --all --check\ncargo clippy --all-targets -- -D warnings\ncargo test --all" />
+        <CodeBlock label="Terminal" lang="bash" code="cargo fmt --all --check\ncargo clippy --all-targets -- -D warnings\ncargo test --all" />
         <p>Plain tests skip database tests. To include them, set a reachable Postgres URL for a user that can create databases:</p>
-        <CodeBlock label="Terminal · local test database" code={'DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/postgres \\\n  cargo test --all -- --include-ignored'} />
+        <CodeBlock label="Terminal · local test database" lang="bash" code={'DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/postgres \\\n  cargo test --all -- --include-ignored'} />
         <p>Port 55432 belongs to the development host’s test database. Compose does not publish its database port. Use your own reachable URL on other hosts.</p>
       </>,
     },
@@ -543,14 +543,14 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       id: "web", title: "Web checks",
       content: <>
         <p>Use Bun 1.3.14. Run from <code>web/</code>:</p>
-        <CodeBlock label="Terminal · web/" code="bun install --frozen-lockfile\nbun run lint\nbun run typecheck\nbun test\nbun run build\nbun run scripts/smoke.ts" />
+        <CodeBlock label="Terminal · web/" lang="bash" code="bun install --frozen-lockfile\nbun run lint\nbun run typecheck\nbun test\nbun run build\nbun run scripts/smoke.ts" />
         <p>The smoke script starts the built standalone server and a mock API. It checks sign-in, permissions, settings, review pages, and error states without real GitHub or model calls.</p>
       </>,
     },
     {
       id: "images", title: "Container checks",
       content: <>
-        <CodeBlock label="Terminal" code="sudo docker build -t crocode:latest .\nsudo docker build -t crocode-sandbox:latest docker/sandbox\nsudo docker compose config --quiet\nsudo docker compose --profile dashboard config --quiet" />
+        <CodeBlock label="Terminal" lang="bash" code="sudo docker build -t crocode:latest .\nsudo docker build -t crocode-sandbox:latest docker/sandbox\nsudo docker compose config --quiet\nsudo docker compose --profile dashboard config --quiet" />
         <p>Use native AMD64 and ARM64 runners to verify both image architectures. Read the <a href="https://github.com/kacigaya/crocode/blob/main/docker/README.md">Docker guide</a> before changing CLI versions or sandbox flags.</p>
       </>,
     },

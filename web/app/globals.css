@@ -169,3 +169,14 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Shiki dual theme: token colors only; the code block card owns the background. */
+.shiki,
+.shiki span {
+  background-color: transparent !important;
+  color: var(--shiki-light);
+}
+.dark .shiki,
+.dark .shiki span {
+  color: var(--shiki-dark);
+}

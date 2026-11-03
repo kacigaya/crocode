@@ -99,7 +99,7 @@ export default function Home() {
         </section>
 
         <section aria-label="Install" className="mx-auto w-full max-w-3xl px-6 pb-24">
-          <CodeBlock label="Terminal" code={INSTALL} />
+          <CodeBlock label="Terminal" lang="bash" code={INSTALL} />
           <p className="text-pretty text-center text-sm text-muted-foreground">
             Set your agent credentials in <code className="font-mono">.env</code> before you start. Read the{" "}
             <Link href="/docs/getting-started/quickstart" className="text-brand underline underline-offset-3">
@@ -129,7 +129,7 @@ export default function Home() {
           <h2 className="mb-6 text-balance text-center text-3xl font-bold tracking-tight">
             Configure each repository
           </h2>
-          <CodeBlock label=".crocode.yml" code={CONFIG} />
+          <CodeBlock label=".crocode.yml" lang="yaml" code={CONFIG} />
         </section>
       </main>
 

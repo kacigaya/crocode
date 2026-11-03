@@ -34,9 +34,12 @@ describe("documentation", () => {
   });
 
   test("code examples render as escaped text", () => {
-    const html = renderToStaticMarkup(<CodeBlock label="Example" code={'<img src=x onerror="alert(1)">'} />);
-    expect(html).toContain("&lt;img");
-    expect(html).not.toContain("<img");
-    expect(html).toContain('role="status"');
+    for (const lang of ["text", "bash"] as const) {
+      const html = renderToStaticMarkup(<CodeBlock label="Example" lang={lang} code={'<img src=x onerror="alert(1)">'} />);
+      expect(html).toContain("&#x3C;");
+      expect(html).not.toContain("<img");
+      expect(html).toContain('role="status"');
+      expect(html.match(/tabindex="0"/g)).toHaveLength(1);
+    }
   });
 });
