@@ -91,12 +91,28 @@ export type Finding = {
 };
 /** GitHub PR patch of one file with findings, stored at review time. */
 export type ReviewFile = { path: string; patch: string };
+/** One OpenGrep result on an added line, as the agent received it. */
+export type SastResult = {
+  rule_id: string;
+  path: string;
+  line: number;
+  end_line: number;
+  severity: string;
+  message: string;
+};
+export type Sast = {
+  /** Null when the scan did not run. */
+  status: "completed" | "partial" | "failed" | "timed_out" | null;
+  results: SastResult[];
+};
 export type ReviewDetail = {
   review: Review;
   summary: string | null;
   findings: Finding[];
   /** Empty for reviews stored before patches were kept. */
   files?: ReviewFile[];
+  /** Absent from APIs older than static analysis. */
+  sast?: Sast;
 };
 
 export type NameCount = { name: string; count: number };

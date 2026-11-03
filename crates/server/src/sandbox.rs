@@ -32,6 +32,9 @@ pub struct Job<'a> {
     pub stdin: String,
     /// Mounts the Codex credential store. Only Codex review runs need it.
     pub codex_auth: bool,
+    /// Runs with no network at all, whatever `CROCODE_SANDBOX_NETWORK` says.
+    /// Host mode cannot enforce this.
+    pub offline: bool,
 }
 
 #[derive(Debug)]
@@ -127,7 +130,12 @@ pub async fn run(
 fn docker_command(settings: &Settings, job: &Job<'_>) -> Command {
     let mut c = Command::new("docker");
     c.args(["run", "--rm", "-i", "--name", &job.name]);
-    c.args(["--network", &settings.sandbox_network]);
+    let network = if job.offline {
+        "none"
+    } else {
+        settings.sandbox_network.as_str()
+    };
+    c.args(["--network", network]);
     if let Some(runtime) = &settings.sandbox_runtime {
         c.args(["--runtime", runtime]);
     }
@@ -329,6 +337,7 @@ mod tests {
                 passthrough: Vec::new(),
                 stdin: String::new(),
                 codex_auth,
+                offline: false,
             };
             let command = docker_command(&settings, &job);
             let args: Vec<_> = command
@@ -358,6 +367,41 @@ mod tests {
             assert!(tokens.contains(&token.to_owned()));
         }
         assert!(!tokens.contains(&"account".to_owned()));
+    }
+
+    #[test]
+    fn offline_jobs_get_no_network() {
+        let settings = Settings::for_test();
+        let mut job = Job {
+            name: "test".into(),
+            repo_dir: Path::new("/repo"),
+            input_dir: Path::new("/input"),
+            output_dir: Path::new("/output"),
+            argv: vec!["opengrep".into()],
+            env: Vec::new(),
+            passthrough: Vec::new(),
+            stdin: String::new(),
+            codex_auth: false,
+            offline: false,
+        };
+        let network = |job: &Job<'_>| {
+            let args: Vec<String> = docker_command(
+                &Settings {
+                    sandbox_network: "bridge".into(),
+                    ..settings.clone()
+                },
+                job,
+            )
+            .as_std()
+            .get_args()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+            let i = args.iter().position(|a| a == "--network").unwrap();
+            args[i + 1].clone()
+        };
+        assert_eq!(network(&job), "bridge");
+        job.offline = true;
+        assert_eq!(network(&job), "none");
     }
 
     #[tokio::test]

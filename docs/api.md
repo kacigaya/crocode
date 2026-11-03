@@ -277,9 +277,30 @@ One review with its findings.
   ],
   "files": [
     { "path": "src/auth.rs", "patch": "@@ -118,3 +118,4 @@ ..." }
-  ]
+  ],
+  "sast": { "status": "completed", "results": [] }
 }
 ```
+
+`sast` holds the static analysis results that the agent received as hints:
+
+```json
+{
+  "status": "completed",
+  "results": [{
+    "rule_id": "python.lang.security.audit.subprocess-shell-true",
+    "path": "app.py",
+    "line": 3,
+    "end_line": 3,
+    "severity": "error",
+    "message": "Found 'subprocess' function with 'shell=True'."
+  }]
+}
+```
+
+`status` is `completed`, `partial`, `failed`, `timed_out`, or `null` when the scan did not run.
+`partial` means OpenGrep finished with errors, so some results can be missing.
+Results cover added lines only, most severe first, at most 50. They can be false positives.
 
 `files` holds the GitHub PR patch of each file with findings, as reviewed.
 Patches over 256 KiB are left out. Reviews from before this field have none.

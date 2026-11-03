@@ -176,6 +176,40 @@ pub async fn execute(
     // The sandbox user must be able to write the output dir.
     set_mode(&output_dir, 0o777).await?;
 
+    // Static analysis runs first. The agent gets its results as hints. A
+    // failed scan is recorded and the review goes on without hints.
+    let sast_hints = if settings.sast && config.sast {
+        let outcome = crate::sast::scan(
+            settings,
+            crate::sast::Dirs {
+                name: format!("crocode-sast-{}", job.id.simple()),
+                repo: &repo_dir,
+                input: &input_dir,
+                output: &output_dir,
+            },
+            &diffs,
+            cancel,
+        )
+        .await
+        .map_err(|err| match err {
+            RunError::Cancelled => ReviewError::Cancelled,
+            other => ReviewError::Retry(anyhow!(other)),
+        })?;
+        let status = outcome.status();
+        let hints = match outcome {
+            crate::sast::Outcome::Completed { hints, .. } => Some(hints),
+            crate::sast::Outcome::Failed(_) => None,
+        };
+        let rows = hints.as_deref().unwrap_or_default();
+        // A lost lease means another worker or a cancel took the review.
+        if !db::store_sast(&state.db, job.id, worker, status, rows).await? {
+            return Err(ReviewError::Cancelled);
+        }
+        hints
+    } else {
+        None
+    };
+
     let prompt_files: Vec<PromptFile<'_>> = reviewed
         .iter()
         .map(|f| PromptFile {
@@ -195,6 +229,7 @@ pub async fn execute(
         },
         &prompt_files,
         config.instructions.as_deref(),
+        sast_hints.as_deref(),
         &boundary,
     );
     tokio::fs::write(
@@ -260,6 +295,7 @@ pub async fn execute(
                 passthrough: passthrough.clone(),
                 stdin: text.clone(),
                 codex_auth: agent == Agent::Codex,
+                offline: false,
             },
             cancel,
         )

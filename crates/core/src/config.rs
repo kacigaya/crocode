@@ -30,6 +30,8 @@ pub struct RepoConfig {
     pub ignore: Vec<String>,
     /// Extra review guidance from the repository maintainers.
     pub instructions: Option<String>,
+    /// Runs static analysis before the agent when the server enables it.
+    pub sast: bool,
 }
 
 impl Default for RepoConfig {
@@ -45,6 +47,7 @@ impl Default for RepoConfig {
             max_changed_lines: 3_000,
             ignore: Vec::new(),
             instructions: None,
+            sast: true,
         }
     }
 }
@@ -138,6 +141,12 @@ mod tests {
         assert!(set.is_match("docs/a.md"));
         assert!(set.is_match("web/pnpm-lock.yaml"));
         assert!(!set.is_match("src/main.rs"));
+    }
+
+    #[test]
+    fn sast_is_on_unless_the_repository_turns_it_off() {
+        assert!(RepoConfig::default().sast);
+        assert!(!RepoConfig::parse("sast: false\n").unwrap().sast);
     }
 
     #[test]
