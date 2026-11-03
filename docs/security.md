@@ -101,6 +101,18 @@ Use separate model keys with provider-side spending limits.
 Keep `.env` private and use a secret manager or read-only key mount where suitable.
 The example shares one environment file across Compose services. Treat those services as one trusted deployment.
 
+## Static analysis job
+
+The OpenGrep scan runs in a separate sandbox container before the agent.
+It uses the same controls as an agent job, with `--network none` in every network mode.
+It receives no credentials. It reads the checkout read-only and writes nothing.
+`.semgrepignore` files and `nosemgrep` comments in the pull request cannot hide code from the scan.
+Changed file paths follow `--`, so a path cannot become a scan option.
+
+The agent receives results as hints inside the untrusted data boundary. File paths come from the pull request.
+The worker stores the rule ID, path, line, severity, and rule message. It never stores the matched code,
+so a secret that a rule finds does not reach the database or the prompt.
+
 ## Sandbox boundary
 
 Each Docker job uses these controls from `crates/server/src/sandbox.rs`:

@@ -587,6 +587,8 @@ struct ReviewDetail {
     findings: Vec<db::FindingRow>,
     /// PR patches of the files with findings. Empty for older reviews.
     files: Vec<db::ReviewFileRow>,
+    /// OpenGrep results that the agent received as hints.
+    sast: db::Sast,
 }
 
 async fn get_review(
@@ -600,12 +602,13 @@ async fn get_review(
     if !access.installations.contains_key(&review.installation_id) {
         return Err(not_found());
     }
-    let (findings, files) = db::review_contents(&state.db, id).await?;
+    let (findings, files, sast) = db::review_contents(&state.db, id).await?;
     Ok(Json(ReviewDetail {
         review,
         summary,
         findings,
         files,
+        sast,
     }))
 }
 

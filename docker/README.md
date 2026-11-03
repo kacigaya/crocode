@@ -41,6 +41,37 @@ The package names match the official [Claude Code install guide](https://code.cl
 OpenCode stays on version 1. Version 2 is a separate upgrade.
 Recheck the CLI flags and security probes when you change these pins.
 
+## Static analysis tools
+
+The sandbox image includes these pinned tools for the [static analysis](../docs/configuration.md#static-analysis) step:
+
+| Tool | Version | License |
+| --- | --- | --- |
+| [OpenGrep](https://github.com/opengrep/opengrep) | 1.33.1, `manylinux` binary | LGPL-2.1 |
+| [opengrep-rules](https://github.com/opengrep/opengrep-rules) | commit `f1d2b562` | LGPL-2.1 with the Commons Clause |
+
+The build checks the SHA-256 of each download. It keeps only rule files from the language directories.
+It drops test fixtures, autofix samples, and tooling. The rules are in `/opt/opengrep-rules`.
+
+OpenGrep is a Nuitka onefile binary. It unpacks itself on first run. The build unpacks it into
+`/opt/opengrep-cache`, so a scan needs no writable, executable directory. The worker sets
+`XDG_CACHE_HOME` to that path for scan jobs only.
+
+To update a pin:
+
+1. Change `OPENGREP_VERSION` or `OPENGREP_RULES_COMMIT` in `docker/sandbox/Dockerfile`.
+2. Replace the matching SHA-256 values. Check them against the GitHub release asset digests.
+3. Rebuild the image and scan a small fixture.
+
+### opengrep-rules license
+
+The rules use LGPL-2.1 with the [Commons Clause](https://commonsclause.com/) condition.
+The condition does not grant the right to sell a product or service whose value derives
+entirely or substantially from the rules. This includes paid hosting or support for such a product.
+CroCode code stays Apache-2.0. The condition applies to the bundled rules, and so to sandbox images that contain them.
+If you offer CroCode as a paid service, check this condition first. You can remove the rules
+from the image and set `CROCODE_SAST=off`, or mount another rule set and set `CROCODE_SAST_RULES`.
+
 ## Worker access
 
 The server image runs as uid/gid `10000:10000`.

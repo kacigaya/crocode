@@ -30,7 +30,8 @@ flowchart LR
     GH[GitHub webhook] --> API[Rust API]
     API --> DB[(Postgres queue)]
     DB --> Worker[Rust worker]
-    Worker --> Sandbox[Read-only agent container]
+    Worker --> SAST[Offline OpenGrep scan]
+    SAST --> Sandbox[Read-only agent container]
     Sandbox --> Validate[Validate and dedupe]
     Validate --> Review[GitHub review]
     Web[Next.js dashboard] --> API
@@ -39,9 +40,10 @@ flowchart LR
 1. The API verifies the webhook signature and queues the pull request.
 2. A worker claims the job and mints a token for that one repository.
 3. The worker reads `.crocode.yml` from the base commit, not from the pull request.
-4. The agent reviews the diff in a container with a read-only checkout and no GitHub token.
-5. CroCode drops findings outside the diff, removes duplicates, and redacts secrets.
-6. CroCode posts one `COMMENT` review. It never approves or blocks a pull request.
+4. OpenGrep scans the changed files in an offline sandbox. Its results go to the agent as hints.
+5. The agent reviews the diff in a container with a read-only checkout and no GitHub token.
+6. CroCode drops findings outside the diff, removes duplicates, and redacts secrets.
+7. CroCode posts one `COMMENT` review. It never approves or blocks a pull request.
 
 A new push cancels the old review. A commit that already has a review is not reviewed again.
 

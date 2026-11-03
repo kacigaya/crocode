@@ -67,6 +67,11 @@ pub struct Settings {
     pub max_repo_size_mb: u64,
     /// Extra environment variable names passed to every agent run.
     pub agent_env: Vec<String>,
+    /// Runs OpenGrep before the agent. See `crate::sast`.
+    pub sast: bool,
+    pub sast_timeout: Duration,
+    /// Rules root as the scan process sees it.
+    pub sast_rules_dir: String,
 }
 
 impl std::fmt::Debug for Settings {
@@ -82,6 +87,7 @@ impl std::fmt::Debug for Settings {
             .field("sandbox_image", &self.sandbox_image)
             .field("work_dir", &self.work_dir)
             .field("worker_concurrency", &self.worker_concurrency)
+            .field("sast", &self.sast)
             .finish_non_exhaustive()
     }
 }
@@ -111,6 +117,9 @@ impl Settings {
             agent_timeout: Duration::from_secs(1),
             max_repo_size_mb: 1,
             agent_env: Vec::new(),
+            sast: true,
+            sast_timeout: Duration::from_secs(1),
+            sast_rules_dir: "/opt/opengrep-rules".into(),
         }
     }
 
@@ -200,6 +209,14 @@ impl Settings {
                         .collect()
                 })
                 .unwrap_or_default(),
+            sast: match optional("CROCODE_SAST").as_deref() {
+                None | Some("on") => true,
+                Some("off") => false,
+                Some(other) => bail!("CROCODE_SAST must be on or off, got {other:?}"),
+            },
+            sast_timeout: Duration::from_secs(number("CROCODE_SAST_TIMEOUT_SECS", 300)?),
+            sast_rules_dir: optional("CROCODE_SAST_RULES")
+                .unwrap_or_else(|| "/opt/opengrep-rules".into()),
         })
     }
 }

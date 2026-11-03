@@ -507,7 +507,7 @@ pub async fn requeue_review(db: &Db, id: Uuid) -> sqlx::Result<bool> {
                 created_at = now(), started_at = NULL, finished_at = NULL, heartbeat_at = NULL,
                 locked_by = NULL, error = NULL, summary = NULL, agent = NULL, model = NULL,
                 agent_duration_ms = NULL, input_tokens = NULL, cached_input_tokens = NULL,
-                output_tokens = NULL
+                output_tokens = NULL, sast_status = NULL
          WHERE r.id = $1 AND r.status IN ('failed', 'cancelled') AND r.locked_by IS NULL
            AND NOT EXISTS (
                SELECT FROM reviews x
@@ -517,8 +517,80 @@ pub async fn requeue_review(db: &Db, id: Uuid) -> sqlx::Result<bool> {
     .bind(id)
     .execute(&mut *tx)
     .await?;
+    if result.rows_affected() == 1 {
+        sqlx::query("DELETE FROM sast_results WHERE review_id = $1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
     Ok(result.rows_affected() == 1)
+}
+
+/// Replaces the static analysis status and results of a review. Returns
+/// false, and writes nothing, when the worker no longer holds the review.
+pub async fn store_sast(
+    db: &Db,
+    review_id: Uuid,
+    worker: &str,
+    status: &str,
+    hints: &[crocode_core::prompt::SastHint],
+) -> sqlx::Result<bool> {
+    let mut tx = db.begin().await?;
+    let owned = sqlx::query(
+        "UPDATE reviews SET sast_status = $3
+         WHERE id = $1 AND status = 'running' AND locked_by = $2",
+    )
+    .bind(review_id)
+    .bind(worker)
+    .bind(status)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        == 1;
+    if !owned {
+        return Ok(false);
+    }
+    sqlx::query("DELETE FROM sast_results WHERE review_id = $1")
+        .bind(review_id)
+        .execute(&mut *tx)
+        .await?;
+    for (position, h) in hints.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO sast_results (review_id, position, rule_id, path, line, end_line, severity, message)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        )
+        .bind(review_id)
+        .bind(position as i32)
+        .bind(&h.rule_id)
+        .bind(&h.path)
+        .bind(h.line as i32)
+        .bind(h.end_line as i32)
+        .bind(&h.severity)
+        .bind(&h.message)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(true)
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct SastRow {
+    pub rule_id: String,
+    pub path: String,
+    pub line: i32,
+    pub end_line: i32,
+    pub severity: String,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Sast {
+    /// `completed`, `partial`, `failed`, `timed_out`, or null when the scan
+    /// did not run.
+    pub status: Option<String>,
+    pub results: Vec<SastRow>,
 }
 
 /// Serializes queue changes of one pull request until the transaction ends,
@@ -974,7 +1046,7 @@ pub struct ReviewFileRow {
 pub async fn review_contents(
     db: &Db,
     review_id: Uuid,
-) -> sqlx::Result<(Vec<FindingRow>, Vec<ReviewFileRow>)> {
+) -> sqlx::Result<(Vec<FindingRow>, Vec<ReviewFileRow>, Sast)> {
     let mut tx = db.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
@@ -993,8 +1065,21 @@ pub async fn review_contents(
             .bind(review_id)
             .fetch_all(&mut *tx)
             .await?;
+    let status: Option<String> =
+        sqlx::query_scalar("SELECT sast_status FROM reviews WHERE id = $1")
+            .bind(review_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .flatten();
+    let results = sqlx::query_as(
+        "SELECT rule_id, path, line, end_line, severity, message
+         FROM sast_results WHERE review_id = $1 ORDER BY position",
+    )
+    .bind(review_id)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
-    Ok((findings, files))
+    Ok((findings, files, Sast { status, results }))
 }
 
 #[derive(Debug, sqlx::FromRow)]

@@ -206,6 +206,7 @@ async fn detect(state: &AppState, agent: Agent, cancel: &CancellationToken) -> R
             passthrough: passthrough.clone(),
             stdin: String::new(),
             codex_auth: false,
+            offline: false,
         },
         cancel,
     )

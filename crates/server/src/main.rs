@@ -20,6 +20,7 @@ mod github;
 mod models;
 mod review;
 mod sandbox;
+mod sast;
 mod settings;
 mod vulnerabilities;
 mod webhook;

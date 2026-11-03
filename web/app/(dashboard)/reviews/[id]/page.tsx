@@ -70,6 +70,7 @@ export default async function ReviewPage({
     summary,
     findings,
     files = [],
+    sast = { status: null, results: [] },
   } = await api<ReviewDetail>(`/api/v1/reviews/${id}`);
   const timelineQuery = new URLSearchParams({
     repo: review.repo_full_name,
@@ -261,6 +262,12 @@ export default async function ReviewPage({
               {findings.length}
             </span>
           </TabsTab>
+          <TabsTab value="sast" className="grow-0">
+            Static analysis
+            <span className="tabular-nums text-muted-foreground">
+              {sast.results.length}
+            </span>
+          </TabsTab>
           <TabsTab value="timeline" className="grow-0">
             Timeline
             <span className="tabular-nums text-muted-foreground">
@@ -314,6 +321,57 @@ export default async function ReviewPage({
             </p>
           ) : (
             <ReviewFindings findings={findings} files={files} />
+          )}
+        </TabsPanel>
+
+        <TabsPanel value="sast" keepMounted className="space-y-3 pt-4">
+          <p className="max-w-3xl text-sm text-muted-foreground">
+            {sast.status === null
+              ? "Static analysis did not run for this review."
+              : sast.status === "completed"
+                ? "OpenGrep results on added lines. The agent received them as hints and reported only the ones it confirmed. Results can be false positives."
+                : sast.status === "partial"
+                  ? "OpenGrep finished with errors, so some results can be missing. The agent received the results below as hints. Results can be false positives."
+                  : sast.status === "timed_out"
+                  ? "Static analysis timed out. The agent reviewed without it."
+                  : "Static analysis failed. The agent reviewed without it."}
+          </p>
+          {(sast.status === "completed" || sast.status === "partial") &&
+            sast.results.length === 0 && (
+            <p className="rounded-xl border border-dashed py-10 text-center text-sm text-muted-foreground">
+              OpenGrep found nothing on the added lines.
+            </p>
+          )}
+          {sast.results.length > 0 && (
+            <ul aria-label="Static analysis results" className="max-w-3xl divide-y rounded-xl border">
+              {sast.results.map((r) => (
+                <li key={`${r.rule_id}:${r.path}:${r.line}`} className="space-y-1 p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant={
+                        r.severity === "error"
+                          ? "error"
+                          : r.severity === "warning"
+                            ? "warning"
+                            : "secondary"
+                      }
+                      className="capitalize"
+                    >
+                      {r.severity}
+                    </Badge>
+                    <span className="break-all font-mono text-xs">
+                      {r.path}:{r.line}
+                      {r.end_line > r.line && `-${r.end_line}`}
+                    </span>
+                  </div>
+                  {/* Rule text and paths are rendered as plain text. */}
+                  <p className="text-sm break-words">{r.message}</p>
+                  <p className="break-all font-mono text-xs text-muted-foreground">
+                    {r.rule_id}
+                  </p>
+                </li>
+              ))}
+            </ul>
           )}
         </TabsPanel>
 

@@ -562,7 +562,7 @@ async fn review_contents_roll_back_together(pool: PgPool) {
         .await
         .is_err()
     );
-    let (findings, files) = db::review_contents(&pool, id).await.unwrap();
+    let (findings, files, _) = db::review_contents(&pool, id).await.unwrap();
     assert_eq!(findings.len(), 1);
     assert!(findings[0].published);
     assert_eq!(files.len(), 1);
@@ -662,13 +662,13 @@ async fn retention_removes_old_and_deleted_reviews_with_their_contents(pool: PgP
     assert_eq!(db::prune_reviews(&pool).await.unwrap(), 3);
     for id in [expired, legacy, deleted] {
         assert!(db::review(&pool, id).await.unwrap().is_none());
-        let (findings, files) = db::review_contents(&pool, id).await.unwrap();
+        let (findings, files, _) = db::review_contents(&pool, id).await.unwrap();
         assert!(findings.is_empty());
         assert!(files.is_empty());
     }
     for id in [recent, active, running] {
         assert!(db::review(&pool, id).await.unwrap().is_some());
-        let (findings, files) = db::review_contents(&pool, id).await.unwrap();
+        let (findings, files, _) = db::review_contents(&pool, id).await.unwrap();
         assert_eq!(findings.len(), 1);
         assert_eq!(files.len(), 1);
     }
@@ -1268,4 +1268,80 @@ async fn digest_opt_in_claims_once_and_seals_the_url(pool: PgPool) {
     assert_eq!(patch(2, json!({ "enabled": false })).await, StatusCode::OK);
     let i = db::installation(&pool, 2).await.unwrap().unwrap();
     assert!(i.digest_webhook_sealed.is_some());
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "needs DATABASE_URL"]
+async fn sast_results_are_stored_shown_and_reset_on_retry(pool: PgPool) {
+    use crocode_core::prompt::SastHint;
+    installation(&pool, 1).await;
+    let id = enqueue(&pool, 1, 1).await;
+    let hint = |rule: &str, line: u32| SastHint {
+        path: "app.py".into(),
+        line,
+        end_line: line,
+        severity: "error".into(),
+        rule_id: rule.into(),
+        message: "Shell injection".into(),
+    };
+    // Only the worker that holds the review can write its results.
+    assert!(
+        !db::store_sast(&pool, id, "worker", "completed", &[hint("x", 1)])
+            .await
+            .unwrap()
+    );
+    db::claim_review(&pool, "worker", 1).await.unwrap().unwrap();
+    assert!(
+        !db::store_sast(&pool, id, "stale", "completed", &[hint("x", 1)])
+            .await
+            .unwrap()
+    );
+    assert!(
+        db::store_sast(
+            &pool,
+            id,
+            "worker",
+            "completed",
+            &[hint("a", 3), hint("b", 1)]
+        )
+        .await
+        .unwrap()
+    );
+    assert!(
+        db::store_sast(
+            &pool,
+            id,
+            "worker",
+            "partial",
+            &[hint("c", 9), hint("a", 3)]
+        )
+        .await
+        .unwrap()
+    );
+    let (_, _, sast) = db::review_contents(&pool, id).await.unwrap();
+    assert_eq!(sast.status.as_deref(), Some("partial"));
+    let rules: Vec<&str> = sast.results.iter().map(|r| r.rule_id.as_str()).collect();
+    assert_eq!(rules, ["c", "a"], "a rerun replaces results in agent order");
+    assert!(
+        db::store_sast(&pool, id, "worker", "bogus", &[])
+            .await
+            .is_err(),
+        "the status check rejects unknown values"
+    );
+
+    let state = state(pool.clone());
+    with_access(&state, "admin", &[(1, true)]);
+    let (status, body) = call(&state, "GET", &format!("/api/v1/reviews/{id}"), "admin").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["sast"]["status"], "partial");
+    assert_eq!(body["sast"]["results"][0]["rule_id"], "c");
+
+    sqlx::query("UPDATE reviews SET status = 'failed', locked_by = NULL WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(db::requeue_review(&pool, id).await.unwrap());
+    let (_, _, sast) = db::review_contents(&pool, id).await.unwrap();
+    assert!(sast.status.is_none() && sast.results.is_empty());
 }

@@ -192,6 +192,19 @@ const mock = Bun.serve({
     if (url.pathname === `/api/v1/reviews/${reviewId}`)
       return Response.json({
         review,
+        sast: {
+          status: "completed",
+          results: [
+            {
+              rule_id: "python.lang.security.audit.subprocess-shell-true",
+              path: "src/<b>auth</b>.py",
+              line: 3,
+              end_line: 3,
+              severity: "error",
+              message: "Found 'subprocess' with 'shell=True'.",
+            },
+          ],
+        },
         summary: '<script>alert("summary")</script>',
         findings: ["low", "high"].map((severity, i) => ({
           id: `finding-${i}`,
@@ -596,6 +609,10 @@ try {
   assert.ok(detail.includes("&lt;script&gt;"));
   assert.ok(!detail.includes('<img src=x onerror="alert(1)">'));
   assert.match(detail, /24\.4K in · 512 out/);
+  assert.match(detail, /Static analysis/);
+  assert.match(detail, /python\.lang\.security\.audit\.subprocess-shell-true/);
+  assert.ok(detail.includes("src/&lt;b&gt;auth&lt;/b&gt;.py"), "SAST paths render as text");
+  assert.ok(!detail.includes("src/<b>auth</b>.py"));
   assert.ok(!detail.includes("Retry review"), "No retry for a succeeded review");
   review.status = "failed";
   review.error = "agent timed out after 900s";
@@ -733,7 +750,7 @@ try {
       `Sign-out clears ${name}`,
     );
   console.log(
-    "PASS: standalone runtime; public docs, agent health, review retry, digest settings, Better Auth GitHub flow, landing, installations, overview, open pull requests and GitHub failure, vulnerabilities, fix priority queue and repository pages, settings and models, admin guard, pagination, review escaping, empty/404/401, expired token, disabled token endpoints, sign-in and sign-out actions.",
+    "PASS: standalone runtime; public docs, static analysis tab, agent health, review retry, digest settings, Better Auth GitHub flow, landing, installations, overview, open pull requests and GitHub failure, vulnerabilities, fix priority queue and repository pages, settings and models, admin guard, pagination, review escaping, empty/404/401, expired token, disabled token endpoints, sign-in and sign-out actions.",
   );
 } catch (error) {
   console.error(output, calls);

@@ -59,6 +59,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
       content: <>
         <p>A new push cancels the previous review. CroCode does not queue the same repository, pull request, and head commit twice, including when the previous review was skipped.</p>
         <p>The bot posts a <code>COMMENT</code> review. It never approves a pull request or requests changes. A person must check each suggestion before applying it.</p>
+        <p>Before the agent runs, OpenGrep scans the changed files in an offline sandbox. The agent receives the results on added lines as hints and reports only the ones it confirms. The review page lists them in the <strong>Static analysis</strong> tab. The bundled opengrep-rules use LGPL-2.1 with the Commons Clause, which does not grant the right to sell a service built mainly on them. See the <a href="https://github.com/kacigaya/crocode/blob/main/docker/README.md#opengrep-rules-license">image notes</a>.</p>
         <p>Use the <Link href="/docs/api-reference">REST API</Link> to read installations and findings. Use <Link href="/docs/development">the development guide</Link> to build and test CroCode.</p>
       </>,
     },
@@ -191,6 +192,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
         [<code key="files">max_files</code>, "100", "Changed file limit before ignore filtering. Includes removed files and files without patches."],
         [<code key="lines">max_changed_lines</code>, "3000", "Added plus deleted lines after filtering."],
         [<code key="ignore">ignore</code>, <code key="empty">[]</code>, "Extra globs added to the built-in ignores."],
+        [<code key="sast">sast</code>, <code key="true">true</code>, "Run OpenGrep before the agent. Works only when CROCODE_SAST is on."],
         [<code key="instructions">instructions</code>, <code key="null">null</code>, "Maintainer guidance. CroCode keeps the first 4,000 characters."],
       ]} />,
     },
@@ -255,6 +257,9 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
         [<code key="cap">CROCODE_MAX_PER_INSTALLATION</code>, "2", "Soft concurrency cap. Concurrent claims can exceed it."],
         [<code key="timeout">CROCODE_AGENT_TIMEOUT_SECS</code>, "900", "Agent timeout. Each Git command has a separate 300-second timeout."],
         [<code key="size">CROCODE_MAX_REPO_SIZE_MB</code>, "1024", "GitHub repository-size pre-check. This is not a disk quota."],
+        [<code key="sast">CROCODE_SAST</code>, "on", "Run OpenGrep static analysis before the agent. Set off to skip it."],
+        [<code key="sast-timeout">CROCODE_SAST_TIMEOUT_SECS</code>, "300", "Static analysis timeout."],
+        [<code key="sast-rules">CROCODE_SAST_RULES</code>, "/opt/opengrep-rules", "Rules root. Change it only in host mode."],
         [<code key="extra">CROCODE_AGENT_ENV</code>, "Empty", "Extra variable names passed to agents. Never include GitHub or dashboard secrets."],
         [<code key="logs">CROCODE_LOG_FORMAT</code>, "Plain text", "Set json for JSON logs."],
         [<code key="rust">RUST_LOG</code>, "info", "Tracing filter."],
@@ -368,7 +373,7 @@ export const DOCS_CONTENT: Record<DocHref, DocSection[]> = {
         ]} />
         <p>A failed or cancelled review shows a plain reason and a next step. Open <strong>Error details</strong> to read the stored error.</p>
         <p>An admin can select <strong>Cancel review</strong> on a queued or running review. A running agent stops within about 20 seconds. An admin can select <strong>Retry review</strong> on a failed or cancelled review when it is the newest review of its pull request. A retry starts with fresh attempts and does not post a GitHub review twice.</p>
-        <p>The Summary tab also shows agent time and the token counts that the agent CLI reported.</p>
+        <p>The Summary tab also shows agent time and the token counts that the agent CLI reported. The <strong>Static analysis</strong> tab lists the OpenGrep results that the agent received as hints. They can be false positives.</p>
       </>,
     },
     {

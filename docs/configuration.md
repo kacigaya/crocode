@@ -44,6 +44,9 @@ If you add a variable to the `api` service, add it to `docker-compose.yml` too.
 | `CROCODE_MAX_PER_INSTALLATION` | `2` | Soft concurrent review cap per installation. Minimum 1. Concurrent claims can exceed it. |
 | `CROCODE_AGENT_TIMEOUT_SECS` | `900` | Timeout for one agent process, in seconds. Each Git command has a separate 300-second timeout. |
 | `CROCODE_MAX_REPO_SIZE_MB` | `1024` | Pre-check against GitHub's reported repository size. This is not a disk quota. |
+| `CROCODE_SAST` | `on` | `on` runs OpenGrep before the agent. `off` skips it. See [Static analysis](#static-analysis). |
+| `CROCODE_SAST_TIMEOUT_SECS` | `300` | Timeout for one static analysis run, in seconds. |
+| `CROCODE_SAST_RULES` | `/opt/opengrep-rules` | Rules root as the scan process sees it. Change it only in host mode. |
 | `CROCODE_AGENT_ENV` | Empty | Extra environment variable names to pass to agents, separated by commas. Values stay off the Docker command line. |
 | `CROCODE_LOG_FORMAT` | Plain text | `json` selects JSON logs. Other values select plain text. |
 | `RUST_LOG` | `info` | Tracing filter. |
@@ -152,6 +155,30 @@ OSV receives those values. Do not use these tools for private package names.
 Sandbox networking must permit HTTPS to `api.osv.dev`.
 `CROCODE_SANDBOX_NETWORK=none` prevents OSV lookups.
 The tools do not give agents shell, write, or arbitrary URL access.
+
+## Static analysis
+
+Before the agent runs, the worker scans the changed files with [OpenGrep](https://github.com/opengrep/opengrep).
+The sandbox image bundles OpenGrep 1.33.1 and a pinned copy of
+[opengrep-rules](https://github.com/opengrep/opengrep-rules). See [the license note](../docker/README.md#opengrep-rules-license).
+
+1. The worker selects the rule directories for the languages of the changed files.
+   It always adds the generic rules, such as secret detection.
+2. The scan runs in its own sandbox container with no network and no credentials.
+3. The worker keeps results that touch an added line. It keeps at most 50, most severe first.
+4. The agent receives the results as hints. It checks each one and reports only real problems.
+5. The dashboard lists the results in the **Static analysis** tab of the review.
+
+The scan ignores `.semgrepignore` files and `nosemgrep` comments. A pull request cannot hide code from it.
+A failed or timed-out scan does not fail the review. The agent then reviews without hints.
+A scan that finishes with errors, such as a file that timed out, is `partial`. The agent still gets its results.
+
+A scan of one or two languages takes about 30 seconds with `runc`, and about 90 seconds with `runsc`.
+Most of the time goes to loading rules. Set `CROCODE_SAST=off` to skip the scan on every repository,
+or `sast: false` in `.crocode.yml` to skip it for one repository.
+
+In host mode (`CROCODE_SANDBOX=none`), install `opengrep` on `PATH` and set `CROCODE_SAST_RULES`
+to a local rules directory. Host mode cannot block the scan's network access.
 
 ## Weekly security digest
 
@@ -267,6 +294,7 @@ Unknown fields, bad YAML, and bad ignore patterns fail the review without a retr
 | `max_files` | `100` | Maximum changed files before ignore filtering. Includes removed files and files without patches. |
 | `max_changed_lines` | `3000` | Maximum added plus deleted lines across reviewed files after filtering. |
 | `ignore` | `[]` | Extra glob patterns. Adds to the default ignores. |
+| `sast` | `true` | Run static analysis before the agent. It runs only when `CROCODE_SAST` is also `on`. |
 | `instructions` | `null` | Maintainer review guidance. CroCode keeps the first 4,000 characters. It cannot change the output format or safety rules. |
 
 Repository agent selection takes priority over installation settings, then the server default.
