@@ -1,15 +1,11 @@
-import {
-  Account,
-  AppNav,
-  MobileNav,
-  type NavInstallation,
-} from "@/components/app-nav";
-import { Brand } from "@/components/brand";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { cookies } from "next/headers";
+import { MobileNav, type NavInstallation } from "@/components/app-nav";
+import { DashboardSidebar } from "@/components/dashboard-sidebar";
 import { api } from "@/lib/api";
 import { accountAvatar } from "@/lib/avatar";
 import { readSession } from "@/lib/auth";
 import { getEnv } from "@/lib/env";
+import { SIDEBAR_COLLAPSED, SIDEBAR_COOKIE } from "@/lib/sidebar";
 import type { Installation, User } from "@/lib/types";
 
 export default async function DashboardLayout({
@@ -17,10 +13,11 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const [user, installations, session] = await Promise.all([
+  const [user, installations, session, cookieStore] = await Promise.all([
     api<User>("/api/v1/me"),
     api<Installation[]>("/api/v1/installations"),
     readSession(),
+    cookies(),
   ]);
   // GitHub sign-in stores the display name and avatar in the session cookie.
   const profile = {
@@ -40,24 +37,18 @@ export default async function DashboardLayout({
   }));
   const installUrl = `https://github.com/apps/${getEnv().appSlug}/installations/new`;
   return (
-    <div className="min-h-dvh md:grid md:grid-cols-[15rem_minmax(0,1fr)]">
+    <div className="min-h-dvh md:grid md:grid-cols-[auto_minmax(0,1fr)]">
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
-      <div className="hidden border-r bg-sidebar md:block">
-        <aside className="sticky top-0 flex h-dvh flex-col">
-          <div className="flex h-14 items-center justify-between px-4">
-            <Brand href="/installations" />
-            <ThemeToggle />
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
-            <AppNav installations={nav} installUrl={installUrl} />
-          </div>
-          <div className="border-t p-3">
-            <Account {...profile} />
-          </div>
-        </aside>
-      </div>
+      <DashboardSidebar
+        defaultCollapsed={
+          cookieStore.get(SIDEBAR_COOKIE)?.value === SIDEBAR_COLLAPSED
+        }
+        installations={nav}
+        installUrl={installUrl}
+        profile={profile}
+      />
       <div className="min-w-0">
         <MobileNav
           installations={nav}

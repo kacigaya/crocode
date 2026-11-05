@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
+import { SidebarToggle } from "./sidebar-toggle";
 import { Autocomplete, AutocompleteInput } from "./ui/autocomplete";
 import { Button } from "./ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./ui/table";
@@ -42,4 +43,19 @@ test("wide tables have a named keyboard scroll target and column headers", () =>
 test("relative times expose exact UTC time without hover", () => {
   const html = renderToStaticMarkup(<TimeAgo value="2026-11-01T10:00:00Z" />);
   expect(html).toContain('aria-label="1 Nov 2026, 10:00 UTC"');
+});
+
+test("sidebar toggle names its action and exposes the expanded state", () => {
+  const expanded = renderToStaticMarkup(
+    <SidebarToggle collapsed={false} controls="sidebar" onToggle={() => {}} />,
+  );
+  expect(expanded).toContain('aria-label="Collapse sidebar"');
+  expect(expanded).toContain('aria-expanded="true"');
+  expect(expanded).toContain('aria-controls="sidebar"');
+  expect(expanded).toContain('aria-keyshortcuts="Control+B Meta+B"');
+  const collapsed = renderToStaticMarkup(
+    <SidebarToggle collapsed controls="sidebar" onToggle={() => {}} />,
+  );
+  expect(collapsed).toContain('aria-label="Expand sidebar"');
+  expect(collapsed).toContain('aria-expanded="false"');
 });
