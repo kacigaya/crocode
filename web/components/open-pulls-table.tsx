@@ -27,15 +27,15 @@ export function OpenPullsTable({
     <Table aria-label="Open pull requests">
       <TableHeader>
         <TableRow>
-          <TableHead className="ps-4">Pull request</TableHead>
+          <TableHead className="ps-4 sm:ps-5">Pull request</TableHead>
           <TableHead>CroCode review</TableHead>
-          <TableHead className="hidden pe-4 sm:table-cell">Updated</TableHead>
+          <TableHead className="hidden pe-4 sm:pe-5 sm:table-cell">Updated</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
         {pulls.map((pull) => (
           <TableRow key={`${pull.repo_full_name}#${pull.number}`}>
-            <TableCell className="max-w-72 py-3 ps-4 whitespace-normal sm:max-w-md">
+            <TableCell className="max-w-72 py-3 ps-4 sm:ps-5 whitespace-normal sm:max-w-md">
               <a
                 href={`${webUrl}/${pull.repo_full_name}/pull/${pull.number}`}
                 className="group inline-flex max-w-full items-center gap-1.5 rounded-sm font-medium leading-5 hover:underline"
@@ -82,7 +82,7 @@ export function OpenPullsTable({
                 </span>
               )}
             </TableCell>
-            <TableCell className="hidden py-3 pe-4 text-xs text-muted-foreground sm:table-cell">
+            <TableCell className="hidden py-3 pe-4 sm:pe-5 text-xs text-muted-foreground sm:table-cell">
               <TimeAgo value={pull.updated_at} />
             </TableCell>
           </TableRow>

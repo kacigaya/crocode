@@ -11,6 +11,7 @@ import { TimeAgo } from "@/components/time-ago";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsPanel, TabsTab } from "@/components/ui/tabs";
 import { api, optionalApi } from "@/lib/api";
 import { accountAvatar } from "@/lib/avatar";
@@ -298,7 +299,10 @@ export default async function ReviewPage({
               ))}
             </ul>
           )}
-          <dl className="grid max-w-3xl grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-2 rounded-xl border bg-card p-4 text-sm sm:grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)]">
+          <Card
+            render={<dl />}
+            className="grid max-w-3xl grid-cols-[auto_minmax(0,1fr)] gap-x-6 gap-y-2 p-4 text-sm sm:grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)] sm:p-5"
+          >
             {details.map(([label, value]) => (
               <div key={label} className="contents">
                 <dt className="text-muted-foreground">{label}</dt>
@@ -307,7 +311,7 @@ export default async function ReviewPage({
                 </dd>
               </div>
             ))}
-          </dl>
+          </Card>
         </TabsPanel>
 
         <TabsPanel value="findings" keepMounted className="pt-4">
@@ -343,9 +347,13 @@ export default async function ReviewPage({
             </p>
           )}
           {sast.results.length > 0 && (
-            <ul aria-label="Static analysis results" className="max-w-3xl divide-y rounded-xl border">
+            <Card
+              render={<ul />}
+              aria-label="Static analysis results"
+              className="max-w-3xl divide-y"
+            >
               {sast.results.map((r) => (
-                <li key={`${r.rule_id}:${r.path}:${r.line}`} className="space-y-1 p-3">
+                <li key={`${r.rule_id}:${r.path}:${r.line}`} className="space-y-1 px-4 py-3 sm:px-5">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge
                       variant={
@@ -371,7 +379,7 @@ export default async function ReviewPage({
                   </p>
                 </li>
               ))}
-            </ul>
+            </Card>
           )}
         </TabsPanel>
 

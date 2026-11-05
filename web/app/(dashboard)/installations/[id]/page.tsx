@@ -13,6 +13,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Card,
+  CardAction,
   CardDescription,
   CardFooter,
   CardHeader,
@@ -146,17 +147,17 @@ export default async function InstallationPage({
       />
 
       <Card className="overflow-hidden">
-        <CardHeader className="border-b px-4 py-3">
+        <CardHeader className="border-b p-4 sm:p-5">
           <CardTitle render={<h2 />} className="text-sm">
             Open pull requests
           </CardTitle>
-          <CardDescription className="text-xs">
+          <CardDescription>
             Live from GitHub, last updated first, with the newest CroCode
             review of each.
           </CardDescription>
         </CardHeader>
         {pulls === null ? (
-          <CardPanel className="p-4">
+          <CardPanel className="p-4 sm:p-5">
             <Alert variant="warning">
               <AlertTriangle />
               <AlertTitle>Cannot load open pull requests</AlertTitle>
@@ -184,7 +185,7 @@ export default async function InstallationPage({
           <>
             <OpenPullsTable pulls={pulls.pulls} webUrl={webUrl} />
             {pulls.truncated && (
-              <CardFooter className="border-t px-4 py-3 text-xs text-muted-foreground">
+              <CardFooter className="border-t px-4 py-3 sm:px-5 text-xs text-muted-foreground">
                 GitHub returned the {pulls.pulls.length} most recently updated
                 pull requests that you can access.
               </CardFooter>
@@ -195,39 +196,39 @@ export default async function InstallationPage({
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <Card>
-          <CardHeader className="px-4 pt-4 pb-3">
+          <CardHeader className="p-4 pb-3 sm:p-5 sm:pb-3">
             <CardTitle render={<h2 />} className="text-sm">
               Reviews per day
             </CardTitle>
-            <CardDescription className="text-xs">
+            <CardDescription>
               Last {stats.days} days, in UTC. Red shows failed reviews.
             </CardDescription>
           </CardHeader>
-          <CardPanel className="px-4 pt-2 pb-4">
+          <CardPanel className="p-4 pt-0 sm:p-5 sm:pt-0">
             <ActivityChart daily={stats.daily} />
           </CardPanel>
         </Card>
         <Card>
-          <CardHeader className="px-4 pt-4 pb-3">
+          <CardHeader className="p-4 pb-3 sm:p-5 sm:pb-3">
             <CardTitle render={<h2 />} className="text-sm">
               Findings by severity
             </CardTitle>
-            <CardDescription className="text-xs">
+            <CardDescription>
               Last {stats.days} days.
             </CardDescription>
           </CardHeader>
-          <CardPanel className="px-4 pt-2 pb-4">
+          <CardPanel className="p-4 pt-0 sm:p-5 sm:pt-0">
             <FindingsBreakdown stats={stats} />
           </CardPanel>
         </Card>
       </div>
 
       <Card className="overflow-hidden">
-        <CardHeader className="border-b px-4 py-3">
+        <CardHeader className="border-b p-4 sm:p-5">
           <CardTitle render={<h2 />} className="text-sm">
             Agent health and usage
           </CardTitle>
-          <CardDescription className="text-xs">
+          <CardDescription>
             Harness shows whether the agent CLI answered its last model list
             check in the sandbox. It does not test credentials. Time and tokens
             cover this installation for the last {stats.days} days, as each
@@ -242,17 +243,20 @@ export default async function InstallationPage({
       </Card>
 
       <Card className="overflow-hidden">
-        <CardHeader className="border-b px-4 py-3">
+        <CardHeader className="border-b p-4 sm:p-5">
           <CardTitle render={<h2 />} className="text-sm">
             {before ? "Older reviews" : "Recent reviews"}
           </CardTitle>
           {before && (
-            <Link
-              href={`/installations/${id}`}
-              className="col-start-2 row-span-2 row-start-1 self-center rounded-sm text-sm text-muted-foreground hover:text-foreground"
-            >
-              Back to latest
-            </Link>
+            <CardAction className="self-center">
+              <Button
+                variant="outline"
+                size="sm"
+                render={<Link href={`/installations/${id}`} />}
+              >
+                Back to latest
+              </Button>
+            </CardAction>
           )}
         </CardHeader>
         {reviews.length === 0 ? (
@@ -287,7 +291,7 @@ export default async function InstallationPage({
           <ReviewsTable reviews={reviews} />
         )}
         {reviews.length === PAGE_SIZE && oldest && (
-          <CardFooter className="border-t px-4 py-3">
+          <CardFooter className="border-t px-4 py-3 sm:px-5">
             <Button
               variant="outline"
               size="sm"

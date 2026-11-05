@@ -5,6 +5,12 @@ import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { readSession } from "@/lib/auth";
 import { setupAvailable } from "@/lib/config";
 import { DOCS_URL } from "@/lib/docs-site";
@@ -100,15 +106,12 @@ export default async function Home({
           className="mx-auto grid max-w-5xl gap-4 px-6 pb-20 sm:grid-cols-2 lg:grid-cols-3"
         >
           {features.map(({ title, body }) => (
-            <div
-              key={title}
-              className="relative rounded-2xl border bg-card p-6 text-card-foreground shadow-xs/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]"
-            >
-              <h2 className="text-lg leading-none font-semibold">{title}</h2>
-              <p className="mt-1.5 text-pretty text-sm text-muted-foreground">
-                {body}
-              </p>
-            </div>
+            <Card key={title}>
+              <CardHeader>
+                <CardTitle render={<h2 />}>{title}</CardTitle>
+                <CardDescription className="text-pretty">{body}</CardDescription>
+              </CardHeader>
+            </Card>
           ))}
         </section>
       </main>

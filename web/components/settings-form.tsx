@@ -76,8 +76,8 @@ export function SettingsForm({
 
   return (
     <Card render={<form action={action} />}>
-      <CardHeader className="border-b">
-        <CardTitle render={<h2 />} className="text-base">
+      <CardHeader className="border-b p-4 sm:p-5">
+        <CardTitle render={<h2 />} className="text-sm">
           Review settings
         </CardTitle>
         <CardDescription>
@@ -86,7 +86,7 @@ export function SettingsForm({
             : "These settings apply to every repository in this installation."}
         </CardDescription>
       </CardHeader>
-      <CardPanel>
+      <CardPanel className="p-4 sm:p-5">
         <fieldset disabled={disabled} className="grid gap-6">
           <legend className="sr-only">Review settings</legend>
           <div className="flex items-start justify-between gap-4">
@@ -281,7 +281,7 @@ export function SettingsForm({
           )}
         </fieldset>
       </CardPanel>
-      <CardFooter className="gap-3 border-t">
+      <CardFooter className="gap-3 border-t px-4 py-3 sm:px-5">
         <SaveButton disabled={disabled || agents.agents.length === 0} />
         {agents.agents.length === 0 && (
           <p className="text-sm">No agents are available on this server.</p>

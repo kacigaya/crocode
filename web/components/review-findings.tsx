@@ -11,6 +11,7 @@ import { useMemo } from "react";
 import { severityColor, StatusBadge } from "@/components/status-badge";
 import { useIsDark } from "@/components/theme-toggle";
 import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import { filePatch, newSideLines } from "@/lib/patch";
 import { SEVERITIES, type Finding, type ReviewFile } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -46,7 +47,7 @@ export function ReviewFindings({
   return (
     <div className="space-y-6">
       {ordered.length > 1 && (
-        <nav aria-label="Files with findings" className="rounded-xl border bg-card">
+        <Card render={<nav />} aria-label="Files with findings">
           <ol className="divide-y text-sm">
             {ordered.map(([path, list], index) => {
               const worst = SEVERITIES[Math.min(...list.map(rank))];
@@ -54,7 +55,7 @@ export function ReviewFindings({
                 <li key={path}>
                   <a
                     href={`#file-${index}`}
-                    className="flex items-center gap-2.5 rounded-sm px-4 py-2 hover:bg-accent"
+                    className="flex items-center gap-2.5 rounded-sm px-4 py-2 hover:bg-accent sm:px-5"
                   >
                     <span
                       aria-hidden="true"
@@ -72,7 +73,7 @@ export function ReviewFindings({
               );
             })}
           </ol>
-        </nav>
+        </Card>
       )}
       {ordered.map(([path, list], index) => (
         <FileFindings
@@ -131,10 +132,11 @@ function FileFindings({
   );
 
   return (
-    <section
+    <Card
+      render={<section />}
       id={id}
       aria-label={path}
-      className="scroll-mt-20 overflow-hidden rounded-xl border"
+      className="scroll-mt-20 overflow-hidden"
     >
       {full !== null && annotations.length > 0 ? (
         <PatchDiff
@@ -171,7 +173,7 @@ function FileFindings({
           ))}
         </ol>
       )}
-    </section>
+    </Card>
   );
 }
 

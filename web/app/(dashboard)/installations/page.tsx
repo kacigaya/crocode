@@ -5,6 +5,7 @@ import { Avatar } from "@/components/brand";
 import { PageHeader, StatGrid } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { accountAvatar } from "@/lib/avatar";
 import { getEnv } from "@/lib/env";
@@ -66,11 +67,12 @@ export default async function InstallationsPage() {
             <h2 id="accounts-title" className="text-sm font-semibold">
               Accounts
             </h2>
-            <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <ul className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
               {installations.map((installation) => (
-                <li
+                <Card
                   key={installation.id}
-                  className="group relative flex flex-col gap-4 rounded-xl border bg-card p-4 transition-colors hover:border-foreground/20"
+                  render={<li />}
+                  className="group gap-4 p-4 transition-colors hover:border-foreground/20 sm:p-5"
                 >
                   <div className="flex items-start gap-3">
                     <Avatar
@@ -82,7 +84,7 @@ export default async function InstallationsPage() {
                       <h3 className="truncate font-semibold">
                         <Link
                           href={`/installations/${installation.id}`}
-                          className="rounded-sm after:absolute after:inset-0 after:rounded-xl"
+                          className="rounded-sm after:absolute after:inset-0 after:rounded-2xl"
                         >
                           {installation.account_login}
                         </Link>
@@ -122,7 +124,7 @@ export default async function InstallationsPage() {
                       {installation.can_admin ? "Admin" : "Read only"}
                     </span>
                   </div>
-                </li>
+                </Card>
               ))}
             </ul>
           </section>

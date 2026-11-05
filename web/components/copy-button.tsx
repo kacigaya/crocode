@@ -65,14 +65,15 @@ export function CodeCopyButton({ value, label }: { value: string; label: string 
       >
         {status}
       </span>
-      <button
-        type="button"
+      <Button
+        variant="outline"
+        size="icon-xs"
         aria-label={`Copy ${label}`}
         onClick={copy}
-        className="absolute top-3 right-3 z-10 inline-flex size-7 cursor-pointer items-center justify-center rounded-md border bg-background/80 text-muted-foreground outline-none backdrop-blur transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background [&_svg]:size-3.5"
+        className="absolute top-3 right-3 z-10"
       >
         {status === "Copied" ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-      </button>
+      </Button>
     </>
   );
 }

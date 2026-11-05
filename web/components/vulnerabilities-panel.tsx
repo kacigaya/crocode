@@ -62,7 +62,7 @@ export function VulnerabilitiesPanel({
   );
   return (
     <Card className="min-w-0 overflow-hidden">
-      <CardHeader className="border-b px-4 py-3">
+      <CardHeader className="border-b p-4 sm:p-5">
         <CardTitle render={<h2 />} className="text-sm">
           CVEs and dependency advisories
         </CardTitle>
@@ -71,7 +71,7 @@ export function VulnerabilitiesPanel({
           without a CVE ID. Fixed and dismissed alerts are excluded.
         </CardDescription>
       </CardHeader>
-      <CardPanel className="space-y-5 p-4">
+      <CardPanel className="space-y-5 p-4 sm:p-5">
         {report === null ? (
           <Alert variant="warning">
             <AlertTitle>Cannot load vulnerabilities</AlertTitle>

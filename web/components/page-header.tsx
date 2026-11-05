@@ -1,5 +1,6 @@
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
+import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 export type Crumb = { label: string; href?: string };
@@ -93,16 +94,11 @@ export function StatGrid({
 }) {
   return (
     <section aria-label={label}>
-      <dl className={cn("grid grid-cols-2 gap-3", className)}>
+      <dl className={cn("grid grid-cols-2 gap-3 sm:gap-4", className)}>
         {stats.map((stat) => (
-          <div
-            key={stat.label}
-            className="flex flex-col rounded-xl border bg-card p-4"
-          >
-            <dt className="text-xs font-medium text-muted-foreground">
-              {stat.label}
-            </dt>
-            <dd className="mt-1.5 text-2xl font-semibold tabular-nums">
+          <Card key={stat.label} render={<div />} className="p-4 sm:p-5">
+            <dt className="text-sm text-muted-foreground">{stat.label}</dt>
+            <dd className="mt-1 text-xl font-semibold tabular-nums sm:text-2xl">
               {stat.value}
             </dd>
             {stat.extra && <dd className="mt-2">{stat.extra}</dd>}
@@ -111,7 +107,7 @@ export function StatGrid({
                 {stat.hint}
               </dd>
             )}
-          </div>
+          </Card>
         ))}
       </dl>
     </section>
