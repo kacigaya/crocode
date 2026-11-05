@@ -9,6 +9,11 @@ import { signOut } from "@/app/auth-actions";
 import { Avatar, Brand, Monogram } from "@/components/brand";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipPopup,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { AVATAR_PREFIX } from "@/lib/avatar";
 import { cn } from "@/lib/utils";
 import { DOCS_URL } from "@/lib/docs-site";
@@ -24,10 +29,12 @@ type NavProps = {
   installations: NavInstallation[];
   installUrl: string;
   onNavigate?: () => void;
+  /** Icon rail mode: labels move to tooltips and stay readable by screen readers. */
+  collapsed?: boolean;
 };
 
 const itemClass =
-  "flex h-8 items-center gap-2.5 rounded-md px-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:font-medium aria-[current=page]:text-foreground";
+  "relative flex h-8 items-center gap-2.5 rounded-md px-2 text-sm text-muted-foreground transition-colors before:absolute before:inset-y-1.5 before:-left-2 before:w-0.75 before:rounded-r-full hover:bg-accent hover:text-foreground aria-[current=page]:bg-sidebar-active aria-[current=page]:font-medium aria-[current=page]:text-sidebar-active-foreground aria-[current=page]:before:bg-brand";
 
 const stateLabel = {
   enabled: "Reviews on",
@@ -35,78 +42,131 @@ const stateLabel = {
   suspended: "Suspended",
 };
 
-export function AppNav({ installations, installUrl, onNavigate }: NavProps) {
+const stateDot = {
+  enabled: "bg-success",
+  disabled: "bg-neutral-400 dark:bg-neutral-500",
+  suspended: "bg-warning",
+};
+
+/** Shows the item label in a tooltip when the sidebar is an icon rail. */
+function NavTooltip({
+  label,
+  collapsed,
+  children,
+}: {
+  label: string;
+  collapsed: boolean;
+  children: React.ReactElement;
+}) {
+  if (!collapsed) return children;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={children} />
+      <TooltipPopup side="right">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+export function AppNav({
+  installations,
+  installUrl,
+  onNavigate,
+  collapsed = false,
+}: NavProps) {
   const pathname = usePathname().replace(/\/$/, "");
+  const item = cn(itemClass, collapsed && "justify-center px-0");
+  const label = collapsed ? "sr-only" : "min-w-0 flex-1 truncate";
   return (
     <nav aria-label="Dashboard" className="space-y-6">
       <ul className="space-y-0.5">
         <li>
-          <Link
-            href="/installations"
-            onClick={onNavigate}
-            aria-current={pathname === "/installations" ? "page" : undefined}
-            className={itemClass}
-          >
-            <LayoutGrid aria-hidden="true" className="size-4" />
-            Overview
-          </Link>
+          <NavTooltip label="Overview" collapsed={collapsed}>
+            <Link
+              href="/installations"
+              onClick={onNavigate}
+              aria-current={pathname === "/installations" ? "page" : undefined}
+              className={item}
+            >
+              <LayoutGrid aria-hidden="true" className="size-4 shrink-0" />
+              <span className={label}>Overview</span>
+            </Link>
+          </NavTooltip>
         </li>
       </ul>
       <div>
-        <h2 className="px-2 pb-1.5 text-xs font-medium text-muted-foreground">
+        <h2
+          className={
+            collapsed
+              ? "sr-only"
+              : "px-2 pb-1.5 text-xs font-medium text-muted-foreground"
+          }
+        >
           Installations
         </h2>
         <ul className="space-y-0.5">
           {installations.map((installation) => {
             const href = `/installations/${installation.id}`;
+            const state = stateLabel[installation.state];
+            const dot = cn("rounded-full", stateDot[installation.state]);
             return (
               <li key={installation.id}>
-                <Link
-                  href={href}
-                  onClick={onNavigate}
-                  aria-current={pathname === href ? "page" : undefined}
-                  className={itemClass}
+                <NavTooltip
+                  label={`${installation.name} · ${state}`}
+                  collapsed={collapsed}
                 >
-                  <Avatar name={installation.name} image={installation.image} />
-                  <span className="min-w-0 flex-1 truncate">
-                    {installation.name}
-                  </span>
-                  <span
-                    aria-hidden="true"
-                    title={stateLabel[installation.state]}
-                    className={cn(
-                      "size-1.5 rounded-full",
-                      installation.state === "enabled" && "bg-success",
-                      installation.state === "disabled" &&
-                        "bg-muted-foreground/40",
-                      installation.state === "suspended" && "bg-warning",
+                  <Link
+                    href={href}
+                    onClick={onNavigate}
+                    aria-current={pathname === href ? "page" : undefined}
+                    className={item}
+                  >
+                    <span className="relative shrink-0">
+                      <Avatar
+                        name={installation.name}
+                        image={installation.image}
+                      />
+                      {collapsed && (
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            dot,
+                            "absolute -right-1 -bottom-1 size-2.5 ring-2 ring-sidebar",
+                          )}
+                        />
+                      )}
+                    </span>
+                    <span className={label}>{installation.name}</span>
+                    {!collapsed && (
+                      <span
+                        aria-hidden="true"
+                        title={state}
+                        className={cn(dot, "size-1.5 shrink-0")}
+                      />
                     )}
-                  />
-                  <span className="sr-only">
-                    , {stateLabel[installation.state]}
-                  </span>
-                </Link>
+                    <span className="sr-only">, {state}</span>
+                  </Link>
+                </NavTooltip>
               </li>
             );
           })}
           <li>
-            <a href={installUrl} onClick={onNavigate} className={itemClass}>
-              <Plus aria-hidden="true" className="size-4" />
-              Add installation
-            </a>
+            <NavTooltip label="Add installation" collapsed={collapsed}>
+              <a href={installUrl} onClick={onNavigate} className={item}>
+                <Plus aria-hidden="true" className="size-4 shrink-0" />
+                <span className={label}>Add installation</span>
+              </a>
+            </NavTooltip>
           </li>
         </ul>
       </div>
       <ul className="space-y-0.5">
         <li>
-          <a
-            href={DOCS_URL}
-            onClick={onNavigate}
-            className={itemClass}
-          >
-            <BookOpen aria-hidden="true" className="size-4" />
-            Documentation
-          </a>
+          <NavTooltip label="Documentation" collapsed={collapsed}>
+            <a href={DOCS_URL} onClick={onNavigate} className={item}>
+              <BookOpen aria-hidden="true" className="size-4 shrink-0" />
+              <span className={label}>Documentation</span>
+            </a>
+          </NavTooltip>
         </li>
       </ul>
     </nav>
@@ -120,10 +180,20 @@ export type Profile = {
   image?: string | null;
 };
 
-export function Account({ login, name, image }: Profile) {
+export function Account({
+  login,
+  name,
+  image,
+  compact,
+}: Profile & { compact?: boolean }) {
   const displayName = name?.trim() || login;
   return (
-    <div className="flex items-center gap-2.5">
+    <div
+      className={cn(
+        "flex items-center gap-2.5",
+        compact && "flex-col gap-2",
+      )}
+    >
       {image?.startsWith(AVATAR_PREFIX) ? (
         <Image
           src={image}
@@ -135,7 +205,7 @@ export function Account({ login, name, image }: Profile) {
       ) : (
         <Monogram name={login} />
       )}
-      <div className="min-w-0 flex-1 leading-tight">
+      <div className={compact ? "sr-only" : "min-w-0 flex-1 leading-tight"}>
         <p className="truncate text-sm font-medium" title={displayName}>
           {displayName}
         </p>
@@ -146,9 +216,16 @@ export function Account({ login, name, image }: Profile) {
         )}
       </div>
       <form action={signOut}>
-        <Button type="submit" variant="ghost" size="icon" aria-label="Sign out">
-          <LogOut aria-hidden="true" />
-        </Button>
+        <NavTooltip label="Sign out" collapsed={compact ?? false}>
+          <Button
+            type="submit"
+            variant="ghost"
+            size="icon"
+            aria-label="Sign out"
+          >
+            <LogOut aria-hidden="true" />
+          </Button>
+        </NavTooltip>
       </form>
     </div>
   );

@@ -3,14 +3,15 @@ import Link from "next/link";
 import { AVATAR_PREFIX } from "@/lib/avatar";
 import { asset } from "@/lib/docs-site";
 
-export function Brand({ href }: { href: string }) {
+/** Logo and product name. `compact` keeps the name for screen readers only. */
+export function Brand({ href, compact }: { href: string; compact?: boolean }) {
   return (
     <Link
       href={href}
       className="inline-flex items-center gap-2.5 rounded-md text-[0.9375rem] font-extrabold"
     >
       <Image src={asset("/logo.svg")} alt="" width={28} height={20} priority />
-      CroCode
+      <span className={compact ? "sr-only" : undefined}>CroCode</span>
     </Link>
   );
 }
