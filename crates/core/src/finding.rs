@@ -75,6 +75,38 @@ pub struct AgentReview {
     pub summary: String,
     #[serde(default)]
     pub findings: Vec<RawFinding>,
+    #[serde(default)]
+    pub confidence: Option<Confidence>,
+    #[serde(default)]
+    pub checks_performed: Vec<String>,
+    #[serde(default)]
+    pub checks_not_run: Vec<String>,
+}
+
+/// Agent estimate of certainty, not a calibrated probability.
+#[derive(Debug, Clone, Deserialize)]
+pub struct Confidence {
+    pub score: u8,
+    pub reason: String,
+}
+
+impl Confidence {
+    fn text(value: Option<Self>) -> String {
+        match value.filter(|c| c.score <= 100 && !c.reason.trim().is_empty()) {
+            Some(c) => {
+                let mut reason = sanitize_text(&c.reason);
+                truncate_chars(&mut reason, 600);
+                let filled = usize::from(c.score / 10);
+                let meter = format!("{}{}", "🟦".repeat(filled), "⬜".repeat(10 - filled));
+                format!(
+                    "**Confidence:** {}/100 (agent estimate). {}\n\n{meter}",
+                    c.score,
+                    reason.trim()
+                )
+            }
+            None => "**Confidence:** Not reported.".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -91,6 +123,8 @@ pub struct RawFinding {
     pub body: String,
     #[serde(default)]
     pub suggestion: Option<String>,
+    #[serde(default)]
+    pub confidence: Option<Confidence>,
 }
 
 /// A validated finding, safe to publish.
@@ -135,6 +169,21 @@ pub fn validate(
 ) -> Validated {
     let mut summary = sanitize_text(&review.summary);
     truncate_chars(&mut summary, MAX_SUMMARY_CHARS);
+    summary = format!("#### Summary\n\n{}", bullet_text(&summary));
+    append_checks(
+        &mut summary,
+        "Checks performed (agent report)",
+        &review.checks_performed,
+        "No check details reported.",
+    );
+    append_checks(
+        &mut summary,
+        "Checks not run (agent report)",
+        &review.checks_not_run,
+        "No additional gaps reported.",
+    );
+    summary.push_str("\n\n#### Confidence\n\n- ");
+    summary.push_str(&Confidence::text(review.confidence));
     let mut out = Validated {
         summary,
         ..Default::default()
@@ -181,6 +230,42 @@ pub fn validate(
     out
 }
 
+fn bullet_text(text: &str) -> String {
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| format!("- {}", line.trim().trim_start_matches("- ")))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn append_checks(summary: &mut String, title: &str, checks: &[String], empty: &str) {
+    summary.push_str(&format!("\n\n#### {title}\n\n"));
+    if checks.is_empty() {
+        summary.push_str(&format!("- {empty}"));
+        return;
+    }
+    // Bound untrusted lists while keeping the GitHub summary below its size limit.
+    let mut bytes = 0;
+    for check in checks.iter().take(24) {
+        let mut text = sanitize_text(check);
+        if text.chars().count() > 600 {
+            truncate_chars(&mut text, 600);
+            text.push_str(" [truncated]");
+        }
+        let entry = bullet_text(&text);
+        if bytes + entry.len() > 10_000 {
+            summary.push_str("- Additional check details omitted.\n");
+            return;
+        }
+        bytes += entry.len();
+        summary.push_str(&entry);
+        summary.push('\n');
+    }
+    if checks.len() > 24 {
+        summary.push_str("- Additional check details omitted.\n");
+    }
+}
+
 fn validate_one(
     raw: RawFinding,
     files: &HashMap<String, FileDiff>,
@@ -199,6 +284,8 @@ fn validate_one(
     }
     let mut body = sanitize_text(&raw.body);
     truncate_chars(&mut body, MAX_BODY_CHARS);
+    body.push_str("\n\n");
+    body.push_str(&Confidence::text(raw.confidence));
 
     let start = raw.start_line.filter(|&s| s > 0 && s < raw.line);
     let inline = diff.is_range_commentable(start.unwrap_or(raw.line), raw.line);
@@ -308,6 +395,7 @@ mod tests {
             title: title.into(),
             body: "why".into(),
             suggestion: Some("fixed".into()),
+            confidence: None,
         }
     }
 
@@ -336,6 +424,9 @@ mod tests {
     #[test]
     fn keeps_inline_findings_and_moves_others_to_summary() {
         let review = AgentReview {
+            checks_performed: Vec::new(),
+            checks_not_run: Vec::new(),
+            confidence: None,
             summary: "ok".into(),
             findings: vec![
                 raw("src/a.rs", 2, Severity::High, "inline"),
@@ -362,6 +453,9 @@ mod tests {
         bad.start_line = Some(4);
         let out = validate(
             AgentReview {
+                checks_performed: Vec::new(),
+                checks_not_run: Vec::new(),
+                confidence: None,
                 summary: String::new(),
                 findings: vec![ok, bad],
             },
@@ -377,6 +471,9 @@ mod tests {
     #[test]
     fn dedupes_and_caps_inline() {
         let review = AgentReview {
+            checks_performed: Vec::new(),
+            checks_not_run: Vec::new(),
+            confidence: None,
             summary: String::new(),
             findings: vec![
                 raw("src/a.rs", 2, Severity::Low, "Same Bug!"),
@@ -396,6 +493,132 @@ mod tests {
         assert_eq!(out.findings[0].severity, Severity::High);
         assert!(out.findings[0].inline);
         assert!(!out.findings[1].inline);
+    }
+
+    #[test]
+    fn confidence_is_bounded_sanitized_and_kept_in_stored_prose() {
+        let mut finding = raw("src/a.rs", 2, Severity::High, "bug");
+        finding.confidence = Some(Confidence {
+            score: 95,
+            reason: "Observed @team <img> ![x](https://example.com)".into(),
+        });
+        let out = validate(
+            AgentReview {
+                checks_performed: Vec::new(),
+                checks_not_run: Vec::new(),
+                summary: "Review complete.".into(),
+                confidence: Some(Confidence {
+                    score: 72,
+                    reason: "Callers checked. Tests not run.".into(),
+                }),
+                findings: vec![finding],
+            },
+            &files(),
+            &opts(),
+        );
+        assert!(
+            out.summary
+                .contains("72/100 (agent estimate). Callers checked.")
+        );
+        let body = &out.findings[0].body;
+        assert!(body.contains("95/100"));
+        assert!(body.contains("@\u{200B}team &lt;img&gt; !\\[x]"));
+        for value in [
+            None,
+            Some(Confidence {
+                score: 101,
+                reason: "invalid".into(),
+            }),
+            Some(Confidence {
+                score: 80,
+                reason: " ".into(),
+            }),
+        ] {
+            assert_eq!(Confidence::text(value), "**Confidence:** Not reported.");
+        }
+        for score in [0, 100] {
+            assert!(
+                Confidence::text(Some(Confidence {
+                    score,
+                    reason: "evidence".into()
+                }))
+                .contains(&format!("{score}/100"))
+            );
+        }
+    }
+
+    #[test]
+    fn confidence_meter_keeps_the_exact_score_and_ten_segments() {
+        for (score, filled) in [(0, 0), (84, 8), (100, 10)] {
+            let text = Confidence::text(Some(Confidence {
+                score,
+                reason: "Evidence checked.".into(),
+            }));
+            assert!(text.contains(&format!("{score}/100 (agent estimate)")));
+            assert_eq!(text.matches('🟦').count(), filled);
+            assert_eq!(text.matches('⬜').count(), 10 - filled);
+        }
+        assert!(!Confidence::text(None).contains('🟦'));
+    }
+
+    #[test]
+    fn old_agent_output_does_not_invent_confidence() {
+        let review = serde_json::from_str(r#"{"summary":"No issues","findings":[]}"#).unwrap();
+        let out = validate(review, &files(), &opts());
+        assert!(out.summary.ends_with("**Confidence:** Not reported."));
+        assert!(
+            serde_json::from_str::<AgentReview>(r#"{"confidence":{"score":-1,"reason":"x"}}"#)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn check_report_is_structured_bounded_and_sanitized() {
+        let out = validate(AgentReview {
+            summary: "Checked callers.\nChecked tests.".into(),
+            checks_performed: vec!["Test-code inspection: src/a.rs. Asserted the boundary case in the test source.".into(), "OSV lookup: failed for @team <img> ![x](https://example.com).".into()],
+            checks_not_run: vec!["Unit tests: not run. Repository execution is prohibited.".into()],
+            ..Default::default()
+        }, &files(), &opts());
+        assert!(
+            out.summary
+                .contains("#### Summary\n\n- Checked callers.\n- Checked tests.")
+        );
+        assert!(
+            out.summary
+                .contains("#### Checks performed (agent report)\n\n- Test-code inspection:")
+        );
+        assert!(
+            out.summary
+                .contains("#### Checks not run (agent report)\n\n- Unit tests: not run.")
+        );
+        assert!(out.summary.contains("@\u{200B}team &lt;img&gt; !\\[x]"));
+        assert!(!out.summary.contains("tests passed"));
+        let long_check = format!(
+            "Test-code inspection: {} complete.",
+            "specific cases, ".repeat(15)
+        );
+        let long = validate(
+            AgentReview {
+                checks_performed: vec![long_check.clone()],
+                ..Default::default()
+            },
+            &files(),
+            &opts(),
+        );
+        assert!(long.summary.contains(&long_check));
+        let legacy = validate(AgentReview::default(), &files(), &opts());
+        assert!(legacy.summary.contains("No check details reported."));
+        let huge = validate(
+            AgentReview {
+                checks_performed: vec!["界".repeat(1_000); 30],
+                ..Default::default()
+            },
+            &files(),
+            &opts(),
+        );
+        assert!(huge.summary.contains("Additional check details omitted."));
+        assert!(huge.summary.len() < 20_000);
     }
 
     #[test]

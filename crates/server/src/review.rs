@@ -178,6 +178,7 @@ pub async fn execute(
 
     // Static analysis runs first. The agent gets its results as hints. A
     // failed scan is recorded and the review goes on without hints.
+    let mut sast_status = "disabled";
     let sast_hints = if settings.sast && config.sast {
         let outcome = crate::sast::scan(
             settings,
@@ -196,6 +197,7 @@ pub async fn execute(
             other => ReviewError::Retry(anyhow!(other)),
         })?;
         let status = outcome.status();
+        sast_status = status;
         let hints = match outcome {
             crate::sast::Outcome::Completed { hints, .. } => Some(hints),
             crate::sast::Outcome::Failed(_) => None,
@@ -373,6 +375,7 @@ pub async fn execute(
             max_inline: config.max_comments,
         },
     );
+    let summary = assessment_summary(&validated, reviewed.len(), files.len(), sast_status);
     let seen = db::published_fingerprints(&state.db, job.repo_id, number, job.id).await?;
     // Findings that an earlier attempt of this review posted keep their rows.
     let own = db::review_published_fingerprints(&state.db, job.id).await?;
@@ -417,22 +420,21 @@ pub async fn execute(
     db::insert_findings(&state.db, job.id, job.repo_id, number, &rows, &patches).await?;
 
     // A review is posted at most once, even across retries.
-    if job.github_review_id.is_none() && !new.is_empty() {
+    if job.github_review_id.is_none() {
         // A dashboard cancel or a newer push may have taken the review away
         // after the last heartbeat.
         if !db::heartbeat(&state.db, job.id, worker).await? {
             return Err(ReviewError::Cancelled);
         }
-        let review_id =
-            publish(&gh, number, &job.head_sha, agent, &validated.summary, &new).await?;
+        let review_id = publish(&gh, number, &job.head_sha, agent, &summary, &new).await?;
         let fingerprints: Vec<&str> = new.iter().map(|f| f.fingerprint.as_str()).collect();
         db::mark_published(&state.db, job.id, review_id, &fingerprints).await?;
     }
 
     let summary = if new.is_empty() {
-        format!("{}\n\nNo new findings.", validated.summary)
+        format!("{summary}\n\n#### New findings\n\n- No new findings.")
     } else {
-        validated.summary
+        summary
     };
     Ok(Outcome::Done {
         summary,
@@ -441,6 +443,61 @@ pub async fn execute(
         agent_ms,
         usage,
     })
+}
+
+fn assessment_summary(
+    review: &finding::Validated,
+    reviewed: usize,
+    total: usize,
+    sast_status: &str,
+) -> String {
+    let recommendation = if !review.findings.is_empty() {
+        "Resolve the reported findings before merge."
+    } else if review.dropped > 0 || reviewed < total || sast_status != "completed" {
+        "Manual review needed. Review coverage is incomplete."
+    } else {
+        "No blocking findings in the reviewed scope."
+    };
+    let (scan_status, scan_detail) = match sast_status {
+        "completed" => (
+            "🟢 Completed",
+            "Results on added lines were provided to the agent as hints.",
+        ),
+        "partial" => ("🟡 Partial", "Some rules or files could not be scanned."),
+        "failed" => ("🔴 Failed", "No usable scan results were available."),
+        "timed_out" => ("🟡 Timed out", "No usable scan results were available."),
+        "disabled" => ("⚪ Not run", "Static analysis is disabled."),
+        _ => ("⚪ Unknown", "Status not reported."),
+    };
+    let coverage = if reviewed == total {
+        "🟢 Included"
+    } else {
+        "🟡 Incomplete"
+    };
+    let verdict = if !review.findings.is_empty() {
+        "🟠 Findings to resolve"
+    } else if review.dropped > 0 || reviewed < total || sast_status != "completed" {
+        "🟡 Manual review needed"
+    } else {
+        "🟢 No blocking findings"
+    };
+    format!(
+        "{}\n\n#### Worker checks\n\n\
+         | Check | Status | Result |\n\
+         | --- | --- | --- |\n\
+         | OpenGrep | {scan_status} | {scan_detail} |\n\
+         | File coverage | {coverage} | {reviewed}/{total} changed files included. |\n\
+         | Finding validation | Completed | {} findings retained; {} filtered out. |\n\
+         | Test execution | ⚪ Not run | Repository code and tests were not run. The review sandbox prohibits execution. |\n\n\
+         #### Merge recommendation\n\n\
+         > **{verdict}**\n\
+         >\n\
+         > {recommendation}\n\n\
+         You decide whether to merge. This review does not prove the PR is safe.",
+        review.summary,
+        review.findings.len(),
+        review.dropped
+    )
 }
 
 async fn lock_codex_auth<'a>(
@@ -567,6 +624,28 @@ pub fn comment_body(f: &Finding) -> String {
     body
 }
 
+fn github_summary(summary: &str) -> String {
+    let mut body = String::new();
+    let mut details_open = false;
+    for line in summary.lines() {
+        if line.starts_with("#### ") && details_open {
+            body.push_str("\n</details>\n\n");
+            details_open = false;
+        }
+        if line == "#### Checks performed (agent report)" {
+            body.push_str("<details>\n<summary>Checks performed (agent report)</summary>\n");
+            details_open = true;
+        } else {
+            body.push_str(line);
+        }
+        body.push('\n');
+    }
+    if details_open {
+        body.push_str("\n</details>\n");
+    }
+    body
+}
+
 pub fn review_body(
     summary: &str,
     findings: &[Finding],
@@ -576,21 +655,34 @@ pub fn review_body(
 ) -> String {
     let mut body = String::from("### CroCode review\n\n");
     if !summary.trim().is_empty() {
-        body.push_str(summary.trim());
+        body.push_str(&github_summary(summary.trim()));
         body.push_str("\n\n");
     }
-    let mut counts: Vec<(Severity, usize)> = Vec::new();
+    let mut counts = [0usize; 5];
     for f in findings {
-        match counts.iter_mut().find(|(s, _)| *s == f.severity) {
-            Some((_, n)) => *n += 1,
-            None => counts.push((f.severity, 1)),
-        }
+        let index = match f.severity {
+            Severity::Critical => 0,
+            Severity::High => 1,
+            Severity::Medium => 2,
+            Severity::Low => 3,
+            Severity::Info => 4,
+        };
+        counts[index] += 1;
     }
-    let counts: Vec<String> = counts
-        .iter()
-        .map(|(s, n)| format!("{} {n}", severity_label(*s)))
-        .collect();
-    body.push_str(&format!("**Findings:** {}\n", counts.join(" · ")));
+    body.push_str(&format!(
+        "#### New findings\n\n**New findings:** {}\n\n",
+        findings.len()
+    ));
+    if findings.is_empty() {
+        body.push_str("No new findings to post.\n");
+    } else {
+        body.push_str(&format!(
+            "| 🔴 Critical | 🟠 High | 🟡 Medium | 🔵 Low | ⚪ Info |\n\
+             | ---: | ---: | ---: | ---: | ---: |\n\
+             | {} | {} | {} | {} | {} |\n",
+            counts[0], counts[1], counts[2], counts[3], counts[4]
+        ));
+    }
 
     let listed: Vec<&Finding> = findings
         .iter()
@@ -599,13 +691,22 @@ pub fn review_body(
     if !listed.is_empty() {
         body.push_str("\nNot posted as inline comments:\n\n");
         for f in listed {
-            body.push_str(&format!(
-                "- **{}** `{}:{}` {}\n",
+            let entry = format!(
+                "- **{}** `{}:{}` {}\n\n{}\n\n",
                 severity_label(f.severity),
                 f.path.replace('`', "'"),
                 f.line,
-                f.title
-            ));
+                f.title,
+                f.body
+            );
+            // Leave space for the omission notice and footer below GitHub's limit.
+            if body.len() + entry.len() > 60_000 {
+                body.push_str(
+                    "\nAdditional finding details omitted from this comment. See the dashboard.\n",
+                );
+                break;
+            }
+            body.push_str(&entry);
         }
     }
     let short_sha: String = head_sha.chars().take(7).collect();
@@ -880,11 +981,99 @@ mod tests {
     fn review_body_lists_non_inline_findings() {
         let findings = [finding(true, None), finding(false, None)];
         let body = review_body("Adds a query.", &findings, Agent::Codex, "abcdef123", false);
-        assert!(body.contains("**Findings:** 🟠 High 2"));
+        assert!(body.contains("**New findings:** 2"));
+        assert!(body.contains("| 0 | 2 | 0 | 0 | 0 |"));
         assert_eq!(body.matches("`src/a.rs:4`").count(), 1);
         assert!(body.contains("Agent: codex · Commit abcdef1"));
         let all = review_body("", &findings, Agent::Codex, "abc", true);
         assert_eq!(all.matches("`src/a.rs:4`").count(), 2);
+    }
+
+    #[test]
+    fn completed_empty_review_has_a_summary_and_advisory_verdict() {
+        let review = finding::Validated {
+            summary: "No issues.\n\n**Confidence:** 80/100 (agent estimate). Callers checked."
+                .into(),
+            ..Default::default()
+        };
+        let summary = assessment_summary(&review, 8, 8, "completed");
+        let body = review_body(&summary, &[], Agent::Codex, "abcdef123", false);
+        assert!(body.contains("**New findings:** 0"));
+        assert!(body.contains("80/100"));
+        assert!(body.contains("No blocking findings in the reviewed scope."));
+        assert!(body.contains("You decide whether to merge."));
+        assert!(body.contains("8/8 changed files"));
+        assert!(body.contains("tests were not run"));
+        assert!(assessment_summary(&review, 7, 8, "completed").contains("Manual review needed"));
+        let filtered = finding::Validated {
+            dropped: 1,
+            ..Default::default()
+        };
+        assert!(assessment_summary(&filtered, 8, 8, "completed").contains("Manual review needed"));
+    }
+
+    #[test]
+    fn worker_check_report_distinguishes_scan_failures_from_success() {
+        let review = finding::Validated::default();
+        for (status, expected) in [
+            ("completed", "🟢 Completed"),
+            ("partial", "🟡 Partial"),
+            ("failed", "🔴 Failed"),
+            ("timed_out", "🟡 Timed out"),
+            ("disabled", "⚪ Not run"),
+        ] {
+            let summary = assessment_summary(&review, 1, 1, status);
+            assert!(summary.contains(&format!("| OpenGrep | {expected} |")));
+            assert!(summary.contains("| Test execution | ⚪ Not run |"));
+            if status != "completed" {
+                assert!(summary.contains("Manual review needed"));
+                assert!(!summary.contains("No blocking findings"));
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_findings_still_prevent_a_clean_recommendation() {
+        let review = finding::Validated {
+            findings: vec![finding(true, None)],
+            ..Default::default()
+        };
+        let summary = assessment_summary(&review, 1, 1, "completed");
+        // Previously published findings are not sent as new comments.
+        let body = review_body(&summary, &[], Agent::Claude, "abc", false);
+        assert!(body.contains("Resolve the reported findings before merge."));
+        assert!(!body.contains("No blocking findings"));
+        let mut non_inline = finding(false, None);
+        non_inline.body =
+            "Evidence.\n\n**Confidence:** 90/100 (agent estimate). Traced caller.".into();
+        let body = review_body("Summary", &[non_inline], Agent::Claude, "abc", false);
+        assert!(body.contains("90/100"));
+        assert!(body.contains("Evidence."));
+    }
+
+    #[test]
+    fn review_body_bounds_large_summary_only_and_inline_fallback_reports() {
+        for inline in [true, false] {
+            let mut large = finding(inline, None);
+            large.body = "界".repeat(4_000);
+            let findings = vec![large; finding::MAX_RAW_FINDINGS];
+            let body = review_body("Summary", &findings, Agent::Codex, "abc", inline);
+            assert!(body.len() < 65_536);
+            assert!(body.contains("Additional finding details omitted"));
+            assert!(body.contains("| 0 | 200 | 0 | 0 | 0 |"));
+            assert!(body.contains("Agent: codex"));
+        }
+    }
+
+    #[test]
+    fn github_check_details_close_before_visible_limits_and_verdict() {
+        let summary = "#### Summary\n\n- Review.\n\n#### Checks performed (agent report)\n\n- Read tests.\n\n#### Checks not run (agent report)\n\n- Unit tests.";
+        let body = github_summary(summary);
+        assert_eq!(body.matches("<details>").count(), 1);
+        assert_eq!(body.matches("</details>").count(), 1);
+        assert!(body.find("</details>").unwrap() < body.find("#### Checks not run").unwrap());
+        let final_section = github_summary("#### Checks performed (agent report)\n\n- Read tests.");
+        assert!(final_section.ends_with("</details>\n"));
     }
 
     #[test]

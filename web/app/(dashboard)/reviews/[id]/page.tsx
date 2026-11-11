@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { Avatar } from "@/components/brand";
 import { PageHeader } from "@/components/page-header";
 import { ReviewControls } from "@/components/review-controls";
+import { ReviewReport } from "@/components/review-report";
 import { ReviewFindings } from "@/components/review-findings";
 import { severityColor, StatusBadge } from "@/components/status-badge";
 import { TimeAgo } from "@/components/time-ago";
@@ -253,7 +254,7 @@ export default async function ReviewPage({
       )}
 
       <Tabs defaultValue={findings.length > 0 ? "findings" : "summary"}>
-        <TabsList variant="underline" className="w-full justify-start border-b">
+        <TabsList variant="underline" className="w-full max-w-full justify-start overflow-x-auto border-b">
           <TabsTab value="summary" className="grow-0">
             Summary
           </TabsTab>
@@ -278,10 +279,10 @@ export default async function ReviewPage({
         </TabsList>
 
         <TabsPanel value="summary" keepMounted className="space-y-6 pt-4">
-          {/* Agent output is untrusted: render it as plain text, never as HTML. */}
-          <p className="max-w-3xl whitespace-pre-wrap break-words text-pretty leading-relaxed">
-            {summary || "No summary is available for this review."}
-          </p>
+          <ReviewReport
+            text={summary || "No summary is available for this review."}
+            className="max-w-4xl"
+          />
           {counts.length > 0 && (
             <ul
               aria-label="Findings by severity"

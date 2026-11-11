@@ -1,5 +1,7 @@
 "use client";
 
+import { ReviewReport } from "@/components/review-report";
+
 import { DEFAULT_THEMES } from "@pierre/diffs";
 import {
   type DiffLineAnnotation,
@@ -211,10 +213,7 @@ function FindingNote({
       <h3 className="text-sm font-semibold text-pretty break-words">
         {finding.title}
       </h3>
-      {/* Agent output is untrusted: render it as plain text, never as HTML. */}
-      <p className="text-sm leading-relaxed whitespace-pre-wrap text-pretty break-words text-muted-foreground">
-        {finding.body}
-      </p>
+      <ReviewReport text={finding.body} />
       {finding.suggestion !== null && (
         <Suggestion
           path={finding.path}

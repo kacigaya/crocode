@@ -22,6 +22,27 @@
   <a href="https://github.com/kacigaya/crocode/blob/main/LICENSE"><img alt="Apache 2.0 License" src="https://shieldcn.dev/github/license/kacigaya/crocode.svg?variant=secondary"></a>
 </p>
 
+## Review results
+
+Every completed review posts a GitHub review comment, including reviews with no new findings.
+The comment uses status tables, a confidence meter, and sections for the summary, checks,
+findings, and merge advice. Color icons always have text labels. Check details can be expanded.
+Agent check entries name the check, result, and evidence.
+Reading test code is reported separately from executing tests. OpenGrep status comes from the worker.
+The comment also includes the reviewed commit and file coverage.
+Repeated findings still affect the recommendation. They do not create duplicate inline comments.
+Failed and skipped reviews do not receive a completed-review comment.
+
+The review and each finding include a confidence score from 0 to 100 with a short reason.
+The score is the agent's estimate, not a measured probability or a guarantee of safety.
+Missing or invalid scores show as “Not reported.” Scores and reasons appear in the stored summary and finding text, including in the dashboard.
+The dashboard renders the same report as styled tables, a labeled confidence bar, and expandable checks.
+It supports only report headings, lists, quotes, tables, bold text, and inline code.
+HTML, links, and images in agent text are never executed or fetched. Older plain-text reports remain readable.
+No external graphics service is used. GitHub colors come from status icons, not custom CSS.
+Repository code and tests are not run during review. You make the merge decision.
+CroCode submits comments. It does not submit approvals or change requests.
+
 ## Use your subscription
 
 CroCode works with the plan you already pay for:

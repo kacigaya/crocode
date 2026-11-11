@@ -133,28 +133,47 @@ Keep findings within the reviewed diff. OSV access does not permit running repos
 - `category`: `security`, `bug`, `regression`, `performance`, or `other`.
 - `title`: one short sentence.
 - `body`: the failure scenario and its impact, then the fix. Plain Markdown, no HTML, no images.
+- `confidence`: a score from 0 to 100 and a short `reason` based on evidence for this finding. Use null if you cannot assess it. This is an estimate, not a measured probability.
 - `suggestion`: exact replacement code for lines `start_line` (or `line`) to `line`, with the original indentation, or null.
+
+# Check report
+
+List every check you actually performed in `checks_performed`. Use one entry per check. Each entry must name the check, state its result, and cite evidence such as file paths, symbols, or OSV package versions. Include diff inspection, caller tracing, reading test cases, and OSV lookups only when you performed them. Label reading tests as test-code inspection, never as tests executed or passed. Attribute validation claims from the PR description to the author; do not present them as your own results. Do not invent commands, test counts, or pass results.
+List checks you could not perform in `checks_not_run`, with a reason for each. Include unit, integration, and runtime tests as not run because running repository code is prohibited. Report failed and incomplete OSV lookups as gaps, not clean scans. Do not report the worker's OpenGrep scan as an agent-executed check; the worker reports its own result.
+Keep each entry short and factual. Use separate entries for distinct checks.
 
 # Output
 
-Return only one JSON object that matches the given schema: a short `summary` of the change and its risk, and the `findings` array. Return an empty array when there are no problems.
+Return only one JSON object that matches the given schema: a short `summary` of the change and its risk, and the `findings` array. Return an empty array when there are no problems. Include review-level `confidence` with a score from 0 to 100 and a short `reason` for confidence in the review conclusion, or null if unknown. Explain evidence and gaps, including tests not run, unavailable tools, or missing context. Do not treat no findings as proof that the code is safe. Do not claim tests ran unless you ran them. Do not approve or reject the pull request; the maintainer decides whether to merge.
 ";
 
 /// JSON Schema for the agent response. All fields are required and nullable
 /// fields use type unions, which strict structured-output modes need.
 pub fn output_schema() -> Value {
+    let confidence = json!({
+        "type": ["object", "null"],
+        "additionalProperties": false,
+        "required": ["score", "reason"],
+        "properties": {
+            "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "reason": { "type": "string" }
+        }
+    });
     json!({
         "type": "object",
         "additionalProperties": false,
-        "required": ["summary", "findings"],
+        "required": ["summary", "findings", "confidence", "checks_performed", "checks_not_run"],
         "properties": {
             "summary": { "type": "string" },
+            "confidence": confidence.clone(),
+            "checks_performed": { "type": "array", "maxItems": 24, "items": { "type": "string", "maxLength": 600 } },
+            "checks_not_run": { "type": "array", "maxItems": 24, "items": { "type": "string", "maxLength": 600 } },
             "findings": {
                 "type": "array",
                 "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["path", "start_line", "line", "severity", "category", "title", "body", "suggestion"],
+                    "required": ["path", "start_line", "line", "severity", "category", "title", "body", "suggestion", "confidence"],
                     "properties": {
                         "path": { "type": "string" },
                         "start_line": { "type": ["integer", "null"] },
@@ -163,7 +182,8 @@ pub fn output_schema() -> Value {
                         "category": { "type": "string", "enum": ["security", "bug", "regression", "performance", "other"] },
                         "title": { "type": "string" },
                         "body": { "type": "string" },
-                        "suggestion": { "type": ["string", "null"] }
+                        "suggestion": { "type": ["string", "null"] },
+                        "confidence": confidence
                     }
                 }
             }

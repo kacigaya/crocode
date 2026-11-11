@@ -257,6 +257,15 @@ of the pull request, or `null`. A GitHub failure returns `502`.
 
 One review with its findings.
 
+For completed reviews, `summary` includes confidence, an advisory merge recommendation,
+and review coverage. It uses Markdown tables, a confidence meter, sections, and bullet points for checks performed,
+checks not run, worker check results, and review advice. Agent-reported checks are labeled.
+Test-code inspection does not mean that tests were executed.
+Each finding's `body` includes its confidence and reason.
+Scores range from 0 to 100. They are agent estimates, not measured probabilities.
+Missing or invalid scores show as “Not reported.” Older reviews keep their original text.
+No separate confidence fields are added to the API response.
+
 ```json
 {
   "review": { "...": "same shape as a list item" },
