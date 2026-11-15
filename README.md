@@ -221,3 +221,5 @@ Read the [security model](docs/security.md) before you review untrusted code.
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
+
+Review quality checks: [local replay evaluation](docs/evaluation.md).

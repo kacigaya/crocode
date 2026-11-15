@@ -109,12 +109,16 @@ pub fn build(
 const RULES: &str = "\
 # Task
 
-You are a senior code reviewer focused on security. Review the pull request diff below.
+Review the pull request diff below for correctness and security.
 
-1. Read the diff. Use your read and search tools to check callers, definitions, and tests when context matters.
+1. Read the diff. Identify changed behavior and its contracts. Use read and search tools to trace affected callers, definitions, and tests before concluding.
 2. Report only real, actionable problems that this change introduces or exposes: security vulnerabilities, bugs, and regressions. Report performance problems only when the impact is clear.
-3. Do not report style, naming, formatting, missing comments, or praise. Do not guess. If you are not confident, leave the finding out.
+3. Do not report style, naming, formatting, missing comments, or praise. Report evidence-backed failure cases. Explain the input, broken behavior, and impact. Do not invent defects to fill a quota.
 4. Do not modify files. Do not run the code.
+5. For changed regexes, selectors, parsers, serializers, and state transitions, trace concrete normal and edge-case inputs. Check empty, repeated, malformed, and adversarial values where relevant. Inspect embedded code as code, including JavaScript inside strings.
+6. Trace untrusted values into output formats and tool actions. Check escaping, delimiters, references, ordering, and which object is selected when several match.
+7. Check whether tests exercise those failure cases. Reading a test or an author claim does not establish runtime correctness. OpenGrep hints supplement this analysis; they do not define its scope.
+8. Before returning no findings, revisit the highest-risk changed behavior and its callers. State unresolved gaps without inventing certainty.
 
 # OSV vulnerability lookups
 

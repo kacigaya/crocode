@@ -1,0 +1,12 @@
+{
+  "id": "regex-fixed",
+  "title": "Change snapshot handling",
+  "files": [
+    {
+      "path": "example.py",
+      "content": "import re\n\ndef searchable(line):\n    return re.sub(r\" \\[ref=[^\\]]+\\]\", \"\", line)\n",
+      "patch": "@@ -1,4 +1,4 @@\n import re\n \n def searchable(line):\n-    return re.sub(r\" \\[ref=[^\\]]+\\](?::.*)?$\", \"\", line)\n+    return re.sub(r\" \\[ref=[^\\]]+\\]\", \"\", line)\n"
+    }
+  ],
+  "expected": []
+}

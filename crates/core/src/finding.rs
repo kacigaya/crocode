@@ -69,7 +69,7 @@ impl Category {
 }
 
 /// The JSON object that agents must return.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct AgentReview {
     #[serde(default)]
     pub summary: String,
@@ -84,7 +84,7 @@ pub struct AgentReview {
 }
 
 /// Agent estimate of certainty, not a calibrated probability.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Confidence {
     pub score: u8,
     pub reason: String,
@@ -109,7 +109,7 @@ impl Confidence {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RawFinding {
     pub path: String,
     #[serde(default)]

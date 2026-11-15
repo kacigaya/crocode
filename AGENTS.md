@@ -32,9 +32,17 @@
 - Codex 0.166.0 bubblewrap namespaces fail under the default Docker restrictions here. The example enables Claude and OpenCode. See `docker/README.md`.
 - Worker image uid/gid: `10000:10000`. Sandbox uid/gid: `10001:10001`.
 - Worker Docker socket access needs `DOCKER_GID` set to the socket group. `CROCODE_WORK_DIR` must be the same absolute host and worker bind path.
+- On 2026-11-14, rebuilt `crocode-sandbox:latest` on the worker's Docker daemon after the image was missing. Claude 2.1.316, Codex 0.166.0, OpenCode 1.19.5, Node.js 24.22.3, and OpenGrep 1.33.1 version probes passed with `runsc`, no network, and a read-only root filesystem. The worker uses `CROCODE_SANDBOX_RUNTIME=runsc`.
+- Current host bindings: API `127.0.0.1:8070`, dashboard `127.0.0.1:3070`. API health check: `curl -fsS http://127.0.0.1:8070/healthz`.
+- This host uses `docker-compose.yml` with `/home/ubuntu/.local/share/crocode-local/compose.override.yml`. For API/worker-only updates after a successful image build, use `sudo docker compose -f docker-compose.yml -f /home/ubuntu/.local/share/crocode-local/compose.override.yml up -d --no-deps --no-build api worker`.
+- Local replay validation: `cargo run -p crocode-server -- eval eval/fixtures/regex.json`. It makes no model calls unless `--run` is supplied. See `docs/evaluation.md`.
+- On 2026-11-15, the sandbox image was absent again and test Postgres port `55432` refused connections. Database tests passed against a temporary isolated Postgres 17 container. A trusted fake-agent probe passed through the replay CLI under `runsc` with no network and read-only source access. This did not test a model or the missing production sandbox image.
+- Host Node.js is 26.13.1. The OSV tool tests passed with this version on 2026-11-15.
+- On 2026-11-15, deployed v0.8.0 to the API and worker using image `sha256:e289bdbb2001e9109972bdbe8e3efa88cf7d5205d644ac8ae3bb08a416d69ecd`. API health and in-container replay validation passed. Rebuilt the sandbox image and retained `crocode:0.8.0` and `crocode-sandbox:0.8.0` tags. No database migration or dashboard restart was needed.
 
 ## Rules
 
+- Write prompts as direct task instructions. Never add role or persona framing such as "You are a senior code reviewer".
 - Keep the API contract in `docs/api.md` in sync with `crates/server/src/api.rs` and `web/`.
 - Never pass GitHub tokens into the agent sandbox.
 - Treat all pull request content as untrusted input.

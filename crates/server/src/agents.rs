@@ -11,6 +11,7 @@ use std::str::FromStr;
 use anyhow::{Context, Result, anyhow, bail};
 use crocode_core::finding::AgentReview;
 use crocode_core::prompt::{extract_json_object, output_schema};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,6 +231,10 @@ pub fn parse_output(agent: Agent, stdout: &str, result_file: Option<&str>) -> Re
         Agent::Claude => {
             let envelope: Value = serde_json::from_str(stdout.trim())
                 .context("claude did not print a JSON result")?;
+            if envelope["is_error"].as_bool() == Some(true) {
+                let detail = envelope["result"].as_str().unwrap_or("no error detail");
+                bail!("claude reported an unsuccessful result: {}", short(detail));
+            }
             if let Some(structured) = envelope.get("structured_output") {
                 structured.clone()
             } else {
@@ -293,7 +298,7 @@ fn codex_error(stdout: &str) -> Option<String> {
 }
 
 /// Token usage that an agent CLI reports. Input counts include cached input.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
     pub input_tokens: Option<i64>,
     pub cached_input_tokens: Option<i64>,
@@ -411,6 +416,27 @@ pub fn parse_usage(agent: Agent, stdout: &str) -> Usage {
     usage
 }
 
+#[derive(Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Telemetry {
+    pub turns: Option<i64>,
+    pub api_duration_ms: Option<i64>,
+    pub permission_denials: Option<usize>,
+}
+
+pub fn parse_telemetry(agent: Agent, stdout: &str) -> Telemetry {
+    if agent != Agent::Claude {
+        return Telemetry::default();
+    }
+    let Ok(envelope) = serde_json::from_str::<Value>(stdout.trim()) else {
+        return Telemetry::default();
+    };
+    Telemetry {
+        turns: tokens(&envelope, "/num_turns"),
+        api_duration_ms: tokens(&envelope, "/duration_api_ms"),
+        permission_denials: envelope["permission_denials"].as_array().map(Vec::len),
+    }
+}
+
 fn short(text: &str) -> String {
     text.chars().take(300).collect()
 }
@@ -524,6 +550,47 @@ mod tests {
         .unwrap();
         assert_eq!(review.summary, "c");
         assert!(parse_output(Agent::Codex, "", None).is_err());
+    }
+
+    #[test]
+    fn claude_error_cannot_publish_a_partial_result() {
+        let text = r#"{"is_error":true,"structured_output":{"summary":"partial","findings":[]}}"#;
+        assert!(parse_output(Agent::Claude, text, None).is_err());
+    }
+
+    #[test]
+    fn telemetry_preserves_unknown_and_rejects_invalid_counts() {
+        assert_eq!(parse_telemetry(Agent::Claude, "{}"), Telemetry::default());
+        assert_eq!(
+            parse_telemetry(Agent::Claude, "not json"),
+            Telemetry::default()
+        );
+        assert_eq!(
+            parse_telemetry(
+                Agent::Claude,
+                r#"{"num_turns":-1,"duration_api_ms":"7","permission_denials":null}"#
+            ),
+            Telemetry::default()
+        );
+        let envelope = r#"{"num_turns":4,"duration_api_ms":123,"permission_denials":[{"tool_name":"Read","tool_input":{"file_path":"private"}}]}"#;
+        let telemetry = parse_telemetry(Agent::Claude, envelope);
+        assert_eq!(
+            telemetry,
+            Telemetry {
+                turns: Some(4),
+                api_duration_ms: Some(123),
+                permission_denials: Some(1)
+            }
+        );
+        assert!(
+            !serde_json::to_string(&telemetry)
+                .unwrap()
+                .contains("private")
+        );
+        assert_eq!(
+            parse_telemetry(Agent::Codex, envelope),
+            Telemetry::default()
+        );
     }
 
     #[test]

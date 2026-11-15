@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, anyhow};
 use crocode_core::config::{CONFIG_PATH, RepoConfig};
@@ -14,9 +14,9 @@ use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::agents::{self, Agent, OSV_FILE, OSV_SERVER, RESULT_FILE, SCHEMA_FILE, valid_model};
+use crate::agents::{self, Agent, RESULT_FILE, valid_model};
 use crate::github::{NewComment, NewReview, PullFile, RepoClient, status_code};
-use crate::sandbox::{self, RunError};
+use crate::sandbox::RunError;
 use crate::settings::FallbackAgent;
 use crate::{AppState, db};
 
@@ -134,11 +134,7 @@ pub async fn execute(
     let ignore = config
         .ignore_set()
         .map_err(|e| ReviewError::Permanent(e.to_string()))?;
-    let reviewed: Vec<&PullFile> = files
-        .iter()
-        .filter(|f| f.status != "removed" && f.patch.is_some() && !ignore.is_match(&f.filename))
-        .filter(|f| finding::normalize_path(&f.filename).is_some())
-        .collect();
+    let (reviewed, coverage) = select_files(&files, |path| ignore.is_match(path));
     if reviewed.is_empty() {
         return skip("no reviewable changes");
     }
@@ -234,18 +230,6 @@ pub async fn execute(
         sast_hints.as_deref(),
         &boundary,
     );
-    tokio::fs::write(
-        input_dir.join(SCHEMA_FILE),
-        prompt::output_schema().to_string(),
-    )
-    .await
-    .context("write schema")?;
-
-    tokio::fs::write(input_dir.join(OSV_FILE), OSV_SERVER)
-        .await
-        .context("write OSV tools")?;
-
-    let paths = sandbox::paths(settings, &work.path);
     let mut agent = agent;
     let mut model = model;
     let mut fallback_used = false;
@@ -255,18 +239,6 @@ pub async fn execute(
         if cancel.is_cancelled() {
             return Err(ReviewError::Cancelled);
         }
-        let (argv, env) = agents::command(
-            agent,
-            model.as_deref(),
-            &paths,
-            agents::claude_uses_subscription(),
-        );
-        let passthrough: Vec<String> = agent
-            .env_names()
-            .iter()
-            .map(|s| s.to_string())
-            .chain(settings.agent_env.iter().cloned())
-            .collect();
         // Keep token snapshots and refreshes under one lock across workers.
         let _auth_lock = if agent == Agent::Codex {
             if let Some(directory) = &settings.codex_auth_dir {
@@ -277,27 +249,17 @@ pub async fn execute(
         } else {
             None
         };
-        let mut codex_secrets = if agent == Agent::Codex {
-            sandbox::codex_auth_secrets(settings).await?
-        } else {
-            Vec::new()
-        };
         db::set_review_agent(&state.db, job.id, worker, agent.name(), model.as_deref()).await?;
         info!(review = %job.id, agent = agent.name(), "agent started");
-        let started = Instant::now();
-        let output = sandbox::run(
+        let attempt = crate::runner::run(
             settings,
-            sandbox::Job {
+            crate::runner::Request {
+                agent,
+                model: model.as_deref(),
+                work_dir: &work.path,
                 name: format!("crocode-{}", job.id.simple()),
-                repo_dir: &repo_dir,
-                input_dir: &input_dir,
-                output_dir: &output_dir,
-                argv,
-                env,
-                passthrough: passthrough.clone(),
-                stdin: text.clone(),
-                codex_auth: agent == Agent::Codex,
-                offline: false,
+                prompt: text.clone(),
+                secrets: vec![gh.token().to_owned()],
             },
             cancel,
         )
@@ -306,31 +268,18 @@ pub async fn execute(
             RunError::Cancelled => ReviewError::Cancelled,
             other => ReviewError::Retry(anyhow!(other)),
         })?;
-        agent_ms = agent_ms.saturating_add(started.elapsed().as_millis() as i64);
-
-        // Agent output can echo credentials if a prompt injection asks for them.
-        // Remove every secret value this worker knows before anything is stored.
-        let mut secrets: Vec<String> = passthrough
-            .iter()
-            .filter_map(|name| std::env::var(name).ok())
-            .collect();
-        secrets.push(gh.token().to_owned());
-        if agent == Agent::Codex {
-            codex_secrets.extend(sandbox::codex_auth_secrets(settings).await?);
-        }
-        secrets.extend(codex_secrets);
-        let stdout = redact(&output.stdout, &secrets);
-        usage.add(agents::parse_usage(agent, &stdout));
-        let result_file = tokio::fs::read_to_string(output_dir.join(RESULT_FILE))
-            .await
-            .ok()
-            .map(|t| redact(&t, &secrets));
-
-        let parsed = agents::parse_output(agent, &stdout, result_file.as_deref());
-        match parsed {
+        agent_ms = agent_ms.saturating_add(attempt.duration_ms);
+        usage.add(attempt.usage);
+        info!(review = %job.id, agent = agent.name(),
+            turns = attempt.telemetry.turns,
+            api_duration_ms = attempt.telemetry.api_duration_ms,
+            permission_denials = attempt.telemetry.permission_denials,
+            "agent activity");
+        let stdout = attempt.stdout;
+        let stderr = attempt.stderr;
+        match attempt.review {
             Ok(review) => break review,
             Err(err) => {
-                let stderr = redact(&output.stderr, &secrets);
                 if let Some(next) = fallback_for_limit(
                     agent,
                     settings.fallback_agent,
@@ -361,7 +310,7 @@ pub async fn execute(
                     .collect();
                 return Err(ReviewError::Retry(anyhow!(
                     "{err:#} (exit ok: {}; stderr: {tail})",
-                    output.success
+                    attempt.success
                 )));
             }
         }
@@ -375,7 +324,7 @@ pub async fn execute(
             max_inline: config.max_comments,
         },
     );
-    let summary = assessment_summary(&validated, reviewed.len(), files.len(), sast_status);
+    let summary = assessment_summary(&validated, &coverage, sast_status);
     let seen = db::published_fingerprints(&state.db, job.repo_id, number, job.id).await?;
     // Findings that an earlier attempt of this review posted keep their rows.
     let own = db::review_published_fingerprints(&state.db, job.id).await?;
@@ -445,15 +394,48 @@ pub async fn execute(
     })
 }
 
+#[derive(Debug, Default, PartialEq)]
+struct Coverage {
+    total: usize,
+    included: usize,
+    ignored: usize,
+    removed: usize,
+    unavailable: usize,
+}
+
+fn select_files(files: &[PullFile], ignored: impl Fn(&str) -> bool) -> (Vec<&PullFile>, Coverage) {
+    let mut coverage = Coverage {
+        total: files.len(),
+        ..Default::default()
+    };
+    let mut included = Vec::new();
+    for f in files {
+        if ignored(&f.filename) {
+            coverage.ignored += 1;
+        } else if f.status == "removed" {
+            coverage.removed += 1;
+        } else if f.patch.is_none() || finding::normalize_path(&f.filename).is_none() {
+            coverage.unavailable += 1;
+        } else {
+            included.push(f);
+        }
+    }
+    coverage.included = included.len();
+    (included, coverage)
+}
+
 fn assessment_summary(
     review: &finding::Validated,
-    reviewed: usize,
-    total: usize,
+    coverage: &Coverage,
     sast_status: &str,
 ) -> String {
+    let gaps = review.dropped > 0
+        || coverage.unavailable > 0
+        || coverage.removed > 0
+        || sast_status != "completed";
     let recommendation = if !review.findings.is_empty() {
         "Resolve the reported findings before merge."
-    } else if review.dropped > 0 || reviewed < total || sast_status != "completed" {
+    } else if gaps {
         "Manual review needed. Review coverage is incomplete."
     } else {
         "No blocking findings in the reviewed scope."
@@ -469,14 +451,21 @@ fn assessment_summary(
         "disabled" => ("⚪ Not run", "Static analysis is disabled."),
         _ => ("⚪ Unknown", "Status not reported."),
     };
-    let coverage = if reviewed == total {
-        "🟢 Included"
-    } else {
+    let Coverage {
+        total,
+        included,
+        ignored,
+        removed,
+        unavailable,
+    } = coverage;
+    let coverage_status = if *unavailable > 0 || *removed > 0 {
         "🟡 Incomplete"
+    } else {
+        "🟢 Eligible files included"
     };
     let verdict = if !review.findings.is_empty() {
         "🟠 Findings to resolve"
-    } else if review.dropped > 0 || reviewed < total || sast_status != "completed" {
+    } else if gaps {
         "🟡 Manual review needed"
     } else {
         "🟢 No blocking findings"
@@ -486,7 +475,9 @@ fn assessment_summary(
          | Check | Status | Result |\n\
          | --- | --- | --- |\n\
          | OpenGrep | {scan_status} | {scan_detail} |\n\
-         | File coverage | {coverage} | {reviewed}/{total} changed files included. |\n\
+         | File coverage | {coverage_status} | {included}/{total} changed file patches included in the agent prompt. \
+         {ignored} ignored by configuration. {removed} deleted files not sent. \
+         {unavailable} without a usable patch or path. |\n\
          | Finding validation | Completed | {} findings retained; {} filtered out. |\n\
          | Test execution | ⚪ Not run | Repository code and tests were not run. The review sandbox prohibits execution. |\n\n\
          #### Merge recommendation\n\n\
@@ -989,6 +980,99 @@ mod tests {
         assert_eq!(all.matches("`src/a.rs:4`").count(), 2);
     }
 
+    fn full(total: usize) -> Coverage {
+        Coverage {
+            total,
+            included: total,
+            ..Default::default()
+        }
+    }
+
+    fn pull_file(name: &str, status: &str, patch: Option<&str>) -> PullFile {
+        PullFile {
+            filename: name.into(),
+            status: status.into(),
+            additions: 1,
+            deletions: 0,
+            patch: patch.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn file_selection_separates_ignored_removed_and_unavailable() {
+        let files = [
+            pull_file("src/a.rs", "modified", Some("@@ -1 +1 @@\n+a")),
+            pull_file("Cargo.lock", "modified", Some("@@ -1 +1 @@\n+b")),
+            pull_file("old.lock", "removed", Some("@@ -1 +0,0 @@\n-c")),
+            pull_file("src/gone.rs", "removed", Some("@@ -1 +0,0 @@\n-d")),
+            pull_file("logo.png", "added", None),
+            pull_file("../escape.rs", "modified", Some("@@ -1 +1 @@\n+e")),
+        ];
+        let (included, coverage) = select_files(&files, |p| p.ends_with(".lock"));
+        let names: Vec<&str> = included.iter().map(|f| f.filename.as_str()).collect();
+        assert_eq!(names, ["src/a.rs"]);
+        assert_eq!(
+            coverage,
+            Coverage {
+                total: 6,
+                included: 1,
+                ignored: 2,
+                removed: 1,
+                unavailable: 2,
+            }
+        );
+    }
+
+    #[test]
+    fn ignored_files_do_not_force_manual_review() {
+        let review = finding::Validated::default();
+        let coverage = Coverage {
+            total: 3,
+            included: 2,
+            ignored: 1,
+            removed: 0,
+            unavailable: 0,
+        };
+        let summary = assessment_summary(&review, &coverage, "completed");
+        assert!(summary.contains("| File coverage | 🟢 Eligible files included |"));
+        assert!(summary.contains("2/3 changed file patches included in the agent prompt."));
+        assert!(summary.contains("1 ignored by configuration. 0 deleted files not sent."));
+        assert!(summary.contains("No blocking findings in the reviewed scope."));
+        assert!(!summary.contains("Manual review needed"));
+        assert!(!summary.contains("inspected"));
+    }
+
+    #[test]
+    fn deleted_source_not_reviewed_requires_manual_review() {
+        let coverage = Coverage {
+            total: 2,
+            included: 1,
+            removed: 1,
+            ..Default::default()
+        };
+        let summary = assessment_summary(&finding::Validated::default(), &coverage, "completed");
+        assert!(summary.contains("Manual review needed"));
+        assert!(summary.contains("1 deleted files not sent"));
+        assert!(!summary.contains("No blocking findings"));
+    }
+
+    #[test]
+    fn missing_eligible_patch_forces_manual_review_with_ignored_files() {
+        let review = finding::Validated::default();
+        let coverage = Coverage {
+            total: 3,
+            included: 1,
+            ignored: 1,
+            removed: 0,
+            unavailable: 1,
+        };
+        let summary = assessment_summary(&review, &coverage, "completed");
+        assert!(summary.contains("| File coverage | 🟡 Incomplete |"));
+        assert!(summary.contains("1 without a usable patch or path."));
+        assert!(summary.contains("Manual review needed. Review coverage is incomplete."));
+        assert!(!summary.contains("No blocking findings"));
+    }
+
     #[test]
     fn completed_empty_review_has_a_summary_and_advisory_verdict() {
         let review = finding::Validated {
@@ -996,20 +1080,33 @@ mod tests {
                 .into(),
             ..Default::default()
         };
-        let summary = assessment_summary(&review, 8, 8, "completed");
+        let summary = assessment_summary(&review, &full(8), "completed");
         let body = review_body(&summary, &[], Agent::Codex, "abcdef123", false);
         assert!(body.contains("**New findings:** 0"));
         assert!(body.contains("80/100"));
         assert!(body.contains("No blocking findings in the reviewed scope."));
         assert!(body.contains("You decide whether to merge."));
-        assert!(body.contains("8/8 changed files"));
+        assert!(body.contains("8/8 changed file patches included in the agent prompt"));
         assert!(body.contains("tests were not run"));
-        assert!(assessment_summary(&review, 7, 8, "completed").contains("Manual review needed"));
+        assert!(
+            assessment_summary(
+                &review,
+                &Coverage {
+                    included: 7,
+                    unavailable: 1,
+                    ..full(8)
+                },
+                "completed"
+            )
+            .contains("Manual review needed")
+        );
         let filtered = finding::Validated {
             dropped: 1,
             ..Default::default()
         };
-        assert!(assessment_summary(&filtered, 8, 8, "completed").contains("Manual review needed"));
+        assert!(
+            assessment_summary(&filtered, &full(8), "completed").contains("Manual review needed")
+        );
     }
 
     #[test]
@@ -1022,7 +1119,7 @@ mod tests {
             ("timed_out", "🟡 Timed out"),
             ("disabled", "⚪ Not run"),
         ] {
-            let summary = assessment_summary(&review, 1, 1, status);
+            let summary = assessment_summary(&review, &full(1), status);
             assert!(summary.contains(&format!("| OpenGrep | {expected} |")));
             assert!(summary.contains("| Test execution | ⚪ Not run |"));
             if status != "completed" {
@@ -1038,7 +1135,7 @@ mod tests {
             findings: vec![finding(true, None)],
             ..Default::default()
         };
-        let summary = assessment_summary(&review, 1, 1, "completed");
+        let summary = assessment_summary(&review, &full(1), "completed");
         // Previously published findings are not sent as new comments.
         let body = review_body(&summary, &[], Agent::Claude, "abc", false);
         assert!(body.contains("Resolve the reported findings before merge."));

@@ -327,7 +327,7 @@ These ignore patterns always apply:
 ```
 
 An ignore pattern removes a file from review findings. It does not remove that file from the checkout sent to the model.
-Removed files and files without GitHub patches are not reviewed.
+Removed files and files without GitHub patches are not reviewed. The report lists ignored and deleted files separately from missing usable patches. Ignored files alone do not force an incomplete-coverage verdict. Deleted source files remain a manual-review gap because their changes are not sent to the agent. Prompt inclusion does not prove that the agent inspected a file.
 GitHub's file endpoint returns at most 3,000 files.
 Keep `max_files` below that service limit.
 
@@ -345,3 +345,7 @@ Delivery IDs remain for 7 days.
 The unique repository, PR number, and head SHA prevent another queue row for the same commit.
 The dashboard API caches user access for 60 seconds.
 These values are code constants, not environment settings.
+
+Local review-quality evaluation uses `crocode eval`. See [replay evaluation](evaluation.md) for fixtures, scoring, provider calls, and run telemetry.
+
+The reviewer prompt checks correctness and security through concrete failure cases. Evidence-backed findings do not require a self-reported confidence threshold. This may change false-alarm rates; use the replay evaluation before changing model defaults.

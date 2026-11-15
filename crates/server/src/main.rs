@@ -16,9 +16,11 @@ mod agents;
 mod api;
 mod db;
 mod digest;
+mod eval;
 mod github;
 mod models;
 mod review;
+mod runner;
 mod sandbox;
 mod sast;
 mod settings;
@@ -40,12 +42,34 @@ pub struct AppState {
     pub webhook_key: Arc<digest::WebhookKey>,
 }
 
-const USAGE: &str = "usage: crocode <api|worker|all|migrate>";
+const USAGE: &str = "usage: crocode <api|worker|all|migrate|eval>";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    init_tracing();
     let mode = std::env::args().nth(1).unwrap_or_default();
+    if mode == "eval" {
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_ansi(false)
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .init();
+    } else {
+        init_tracing();
+    }
+    if mode == "eval" {
+        let cancel = CancellationToken::new();
+        let signal_cancel = cancel.clone();
+        let signal = tokio::spawn(async move {
+            wait_for_signal().await;
+            signal_cancel.cancel();
+        });
+        let result = eval::execute(std::env::args().skip(2).collect(), &cancel).await;
+        signal.abort();
+        return result;
+    }
     if mode == "migrate" {
         let url = std::env::var("MIGRATION_DATABASE_URL")
             .context("MIGRATION_DATABASE_URL is required for crocode migrate")?;
@@ -57,7 +81,7 @@ async fn main() -> Result<()> {
         "worker" => (false, true),
         "all" => (true, true),
         "-h" | "--help" | "help" => {
-            println!("{USAGE}");
+            println!("{USAGE}\n{}", eval::USAGE);
             return Ok(());
         }
         _ => bail!("{USAGE}"),

@@ -144,6 +144,18 @@ impl Settings {
                 required("GITHUB_WEBHOOK_SECRET")?,
             ),
         };
+        if webhook_secret.len() < 16 {
+            bail!("GITHUB_WEBHOOK_SECRET must be at least 16 characters");
+        }
+        let mut settings = Self::runtime_from_env()?;
+        settings.database_url = required("DATABASE_URL")?;
+        settings.github_app_id = github_app_id;
+        settings.github_private_key = github_private_key;
+        settings.github_webhook_secret = webhook_secret.into_bytes();
+        Ok(settings)
+    }
+
+    pub fn runtime_from_env() -> Result<Self> {
         let agents = optional("CROCODE_AGENTS")
             .unwrap_or_else(|| "claude,codex,opencode".into())
             .split(',')
@@ -169,16 +181,13 @@ impl Settings {
             Some("none") => SandboxMode::None,
             Some(other) => bail!("CROCODE_SANDBOX must be docker or none, got {other:?}"),
         };
-        if webhook_secret.len() < 16 {
-            bail!("GITHUB_WEBHOOK_SECRET must be at least 16 characters");
-        }
 
         Ok(Self {
-            database_url: required("DATABASE_URL")?,
+            database_url: String::new(),
             bind: optional("CROCODE_BIND").unwrap_or_else(|| "0.0.0.0:8080".into()),
-            github_app_id,
-            github_private_key,
-            github_webhook_secret: webhook_secret.into_bytes(),
+            github_app_id: 0,
+            github_private_key: Vec::new(),
+            github_webhook_secret: Vec::new(),
             github_api_url: optional("GITHUB_API_URL")
                 .unwrap_or_else(|| "https://api.github.com".into()),
             github_web_url: optional("GITHUB_WEB_URL")
