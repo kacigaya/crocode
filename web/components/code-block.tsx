@@ -30,10 +30,10 @@ export function CodeBlock({ code, label, lang = "text" }: { code: string; label:
   });
 
   return (
-    <div className="relative my-5 min-w-0">
+    <div className="not-prose relative my-6 min-w-0">
       <CodeCopyButton value={code} label={label} />
       <div
-        className="overflow-x-auto rounded-2xl border bg-card p-6 text-sm leading-relaxed [&_code]:font-mono [&_pre]:bg-transparent [&_pre]:font-mono"
+        className="overflow-x-auto rounded-2xl border bg-card in-[.prose]:rounded-lg p-6 text-sm leading-relaxed [&_code]:font-mono [&_pre]:bg-transparent [&_pre]:font-mono"
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </div>

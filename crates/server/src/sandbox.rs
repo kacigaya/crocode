@@ -129,7 +129,7 @@ pub async fn run(
 /// `-e NAME` so their values never appear on a command line.
 fn docker_command(settings: &Settings, job: &Job<'_>) -> Command {
     let mut c = Command::new("docker");
-    c.args(["run", "--rm", "-i", "--name", &job.name]);
+    c.args(["run", "--rm", "-i", "--pull=never", "--name", &job.name]);
     let network = if job.offline {
         "none"
     } else {
@@ -200,24 +200,7 @@ pub async fn codex_auth_secrets(settings: &Settings) -> anyhow::Result<Vec<Strin
         bail!("CROCODE_CODEX_AUTH_DIR requires the Docker sandbox");
     }
     let name = format!("crocode-auth-{}", uuid::Uuid::new_v4().simple());
-    let mut command = Command::new("docker");
-    command.args([
-        "run",
-        "--name",
-        &name,
-        "--rm",
-        "--network",
-        "none",
-        "--read-only",
-        "--cap-drop=ALL",
-        "--security-opt=no-new-privileges",
-        "--user=10001:10001",
-    ]);
-    if let Some(runtime) = &settings.sandbox_runtime {
-        command.args(["--runtime", runtime]);
-    }
-    command.arg(format!("--volume={}:/auth:ro", directory.display()));
-    command.args([&settings.sandbox_image, "cat", "/auth/auth.json"]);
+    let mut command = auth_reader_command(settings, directory, &name);
     command
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -244,6 +227,29 @@ pub async fn codex_auth_secrets(settings: &Settings) -> anyhow::Result<Vec<Strin
     let value: serde_json::Value = serde_json::from_str(&bytes)
         .map_err(|_| anyhow::anyhow!("invalid Codex credential store"))?;
     Ok(auth_tokens(&value))
+}
+
+fn auth_reader_command(settings: &Settings, directory: &Path, name: &str) -> Command {
+    let mut command = Command::new("docker");
+    command.args([
+        "run",
+        "--pull=never",
+        "--name",
+        name,
+        "--rm",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "--user=10001:10001",
+    ]);
+    if let Some(runtime) = &settings.sandbox_runtime {
+        command.args(["--runtime", runtime]);
+    }
+    command.arg(format!("--volume={}:/auth:ro", directory.display()));
+    command.args([&settings.sandbox_image, "cat", "/auth/auth.json"]);
+    command
 }
 
 fn auth_tokens(value: &serde_json::Value) -> Vec<String> {
@@ -351,6 +357,43 @@ mod tests {
             );
             assert!(args.iter().any(|s| s == "--read-only"));
             assert!(args.iter().any(|s| s == "--security-opt=no-new-privileges"));
+        }
+    }
+
+    #[test]
+    fn sandbox_launches_never_pull_a_missing_image() {
+        let mut settings = Settings::for_test();
+        settings.sandbox_runtime = Some("runsc".into());
+        let job = Job {
+            name: "test".into(),
+            repo_dir: Path::new("/repo"),
+            input_dir: Path::new("/input"),
+            output_dir: Path::new("/output"),
+            argv: vec!["claude".into()],
+            env: Vec::new(),
+            passthrough: Vec::new(),
+            stdin: String::new(),
+            codex_auth: false,
+            offline: false,
+        };
+        for command in [
+            docker_command(&settings, &job),
+            auth_reader_command(&settings, Path::new("/private/codex-auth"), "auth"),
+        ] {
+            let args: Vec<String> = command
+                .as_std()
+                .get_args()
+                .map(|s| s.to_string_lossy().into_owned())
+                .collect();
+            let image = args
+                .iter()
+                .position(|a| a == &settings.sandbox_image)
+                .unwrap();
+            let pull = args.iter().position(|a| a == "--pull=never").unwrap();
+            assert!(pull < image);
+            assert_eq!(args[0], "run");
+            assert!(args.windows(2).any(|w| w == ["--runtime", "runsc"]));
+            assert!(args.iter().any(|a| a == "--cap-drop=ALL"));
         }
     }
 

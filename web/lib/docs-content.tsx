@@ -11,12 +11,12 @@ export interface DocSection {
 }
 
 function Note({ children }: { children: ReactNode }) {
-  return <aside className="my-6 rounded-2xl border bg-card px-5 py-1 text-sm">{children}</aside>;
+  return <aside className="my-6 rounded-lg border bg-card px-5 py-1 text-sm">{children}</aside>;
 }
 
 function Table({ headings, rows }: { headings: string[]; rows: ReactNode[][] }) {
   return (
-    <div className="my-5 overflow-x-auto rounded-lg border" role="region" aria-label={headings.join(", ")} tabIndex={0}>
+    <div className="overflow-x-auto" role="region" aria-label={headings.join(", ")} tabIndex={0}>
       <table>
         <thead><tr>{headings.map((heading) => <th scope="col" key={heading}>{heading}</th>)}</tr></thead>
         <tbody>{rows.map((row, index) => <tr key={index}>{row.map((cell, column) => <td key={column}>{cell}</td>)}</tr>)}</tbody>

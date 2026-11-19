@@ -53,22 +53,22 @@ export default async function DocPage({ params }: Props) {
   return (
     <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_12rem] xl:gap-10">
       <div className="min-w-0">
-        <article aria-labelledby="doc-title">
-          <p className="mb-3 text-xs font-medium text-brand">Documentation</p>
-          <h1 id="doc-title" className="text-balance text-3xl font-semibold sm:text-4xl">{doc.title}</h1>
-          <p className="mt-4 text-pretty text-lg leading-8 text-muted-foreground">{doc.description}</p>
-          <details className="mt-7 rounded-lg border px-4 py-3 text-sm xl:hidden">
-            <summary className="cursor-pointer font-medium">On this page</summary>
-            <div className="mt-3"><Outline sections={sections} /></div>
-          </details>
-          <div className="docs-prose">
-            {sections.map((section) => (
-              <section key={section.id} aria-labelledby={section.id}>
-                <h2 id={section.id}><a className="heading-anchor" href={`#${section.id}`}>{section.title}</a></h2>
-                {section.content}
-              </section>
-            ))}
-          </div>
+        <details className="mb-8 rounded-lg border px-4 py-3 text-sm xl:hidden">
+          <summary className="cursor-pointer font-medium">On this page</summary>
+          <div className="mt-3"><Outline sections={sections} /></div>
+        </details>
+        <article
+          aria-labelledby="doc-title"
+          className="prose prose-neutral max-w-none dark:prose-invert prose-headings:scroll-mt-24 prose-headings:text-balance prose-p:text-pretty prose-a:text-brand prose-code:wrap-break-word"
+        >
+          <h1 id="doc-title">{doc.title}</h1>
+          <p>{doc.description}</p>
+          {sections.map((section) => (
+            <section key={section.id} aria-labelledby={section.id}>
+              <h2 id={section.id}><a className="heading-anchor" href={`#${section.id}`}>{section.title}</a></h2>
+              {section.content}
+            </section>
+          ))}
         </article>
         <nav aria-label="Previous and next pages" className="mt-12 grid gap-3 border-t pt-6 sm:grid-cols-2">
           {previous && (

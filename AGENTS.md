@@ -18,7 +18,7 @@
 - Docs checks (in `web/`): `bun run build:docs`, `bun run scripts/check-docs-export.ts`. GitHub Pages publishes `web/site/out/` at `https://kacigaya.github.io/crocode/` through `.github/workflows/pages.yml`. The static app uses base path `/crocode` and excludes dashboard and auth routes.
 - Backend: `sudo docker compose up -d --build postgres migrate api worker`.
 - Dashboard after its Dockerfile merge: `sudo docker compose --profile dashboard up -d --build`.
-- Images: `sudo docker build -t crocode:latest .` and `sudo docker build -t crocode-sandbox:latest docker/sandbox`.
+- Images: `sudo docker build -t crocode:latest .` and `sudo docker build --label vps-dashboard.retain=true -t crocode-sandbox:latest docker/sandbox`. The label keeps the idle sandbox image out of the VPS dashboard's Docker image prune.
 - Compose validation: `sudo docker compose config --quiet` and `sudo docker compose --profile dashboard config --quiet`.
 - Workflow validation when actionlint is installed: `actionlint .github/workflows/ci.yml`.
 
@@ -38,7 +38,9 @@
 - Local replay validation: `cargo run -p crocode-server -- eval eval/fixtures/regex.json`. It makes no model calls unless `--run` is supplied. See `docs/evaluation.md`.
 - On 2026-11-15, the sandbox image was absent again and test Postgres port `55432` refused connections. Database tests passed against a temporary isolated Postgres 17 container. A trusted fake-agent probe passed through the replay CLI under `runsc` with no network and read-only source access. This did not test a model or the missing production sandbox image.
 - Host Node.js is 26.13.1. The OSV tool tests passed with this version on 2026-11-15.
+- On 2026-11-19, Next.js 16.4.3 builds exited 1 with a `SecurityFatalError` upgrade notice for two moderate `use cache` advisories (`<=16.4.4`). After the upgrade to `next` and `eslint-config-next` 16.4.6, `bun run build` and `bun run build:docs` pass with no notice.
 - On 2026-11-15, deployed v0.8.0 to the API and worker using image `sha256:e289bdbb2001e9109972bdbe8e3efa88cf7d5205d644ac8ae3bb08a416d69ecd`. API health and in-container replay validation passed. Rebuilt the sandbox image and retained `crocode:0.8.0` and `crocode-sandbox:0.8.0` tags. No database migration or dashboard restart was needed.
+- Later on 2026-11-15, sandbox launches gained `--pull=never` (agent runs and the Codex credential reader), so a missing sandbox image fails at once and never pulls. Only the worker was rebuilt and recreated, as image `sha256:e76d9a2e16508f608d2e73f650fd81627befdf32fc614882cbff5ba5dfee499e`; the API still runs v0.8.0 `e289bdbb2001`. `crocode-sandbox:latest` was rebuilt with the label `vps-dashboard.retain=true` (`sha256:93d02afbde20`). `host-security-check` warns when the sandbox image is missing or unlabeled.
 
 ## Rules
 
