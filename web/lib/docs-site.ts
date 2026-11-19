@@ -8,3 +8,7 @@ export function canonicalDocUrl(path: string) {
 export function asset(path: `/${string}`) {
   return `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}${path}`;
 }
+
+export function isDocsSite() {
+  return process.env.NEXT_PUBLIC_BASE_PATH !== undefined;
+}

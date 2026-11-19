@@ -1,10 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CodeBlock } from "../components/code-block";
+import { SiteFooter } from "../components/site-footer";
 import { DOCS_CONTENT } from "./docs-content";
 import { DOCS_PAGES, findDoc } from "./docs-nav";
 
 describe("documentation", () => {
+  test("links the privacy policy only on the static docs site", () => {
+    const saved = process.env.NEXT_PUBLIC_BASE_PATH;
+    try {
+      delete process.env.NEXT_PUBLIC_BASE_PATH;
+      expect(renderToStaticMarkup(<SiteFooter />)).not.toContain("/privacy");
+      process.env.NEXT_PUBLIC_BASE_PATH = "/crocode";
+      expect(renderToStaticMarkup(<SiteFooter />)).toContain('href="/privacy"');
+    } finally {
+      if (saved === undefined) delete process.env.NEXT_PUBLIC_BASE_PATH;
+      else process.env.NEXT_PUBLIC_BASE_PATH = saved;
+    }
+  });
+
   test("matches only known routes", () => {
     expect(findDoc()?.href).toBe("/docs");
     expect(findDoc(["configuration", "agents"])?.title).toBe("Agents");

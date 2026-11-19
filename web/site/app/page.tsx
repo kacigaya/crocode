@@ -100,13 +100,6 @@ export default function Home() {
 
         <section aria-label="Install" className="mx-auto w-full max-w-3xl px-6 pb-24">
           <CodeBlock label="Terminal" lang="bash" code={INSTALL} />
-          <p className="text-pretty text-center text-sm text-muted-foreground">
-            Set your agent credentials in <code className="font-mono">.env</code> before you start. Read the{" "}
-            <Link href="/docs/getting-started/quickstart" className="text-brand underline underline-offset-3">
-              Quickstart
-            </Link>{" "}
-            for all steps.
-          </p>
         </section>
 
         <section className="mx-auto w-full max-w-5xl px-6 pb-24">
